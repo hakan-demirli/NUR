@@ -48,7 +48,7 @@
       overlays.default =
         final: prev:
         let
-          system = prev.system;
+          system = prev.stdenv.hostPlatform.system;
           systemPackages = perSystem.packages.${system} or { };
           packagesToAdd = lib.filterAttrs (name: _: name != "default") systemPackages;
         in
