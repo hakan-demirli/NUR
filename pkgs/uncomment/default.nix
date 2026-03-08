@@ -2,17 +2,17 @@
   pkgs,
 }:
 
-pkgs.rustPlatform.buildRustPackage rec {
+pkgs.rustPlatform.buildRustPackage {
   pname = "uncomment";
-  version = "2.10.4";
+  version = "2.11.0";
 
   src = pkgs.fetchFromGitHub {
-    owner = "hakan-demirli";
+    owner = "Goldziher";
     repo = "uncomment";
-    rev = "a9a1dc7c10cb983c62d4dcd1134b85fdb69a998e";
-    hash = "sha256-a0sEVazu1JtF3UvtL4lDB70ltZkhC8fls/KdAGFX2wc=";
+    rev = "fa0f93d90e70c0655da261fa269d5bbcea8c6b3c";
+    hash = "sha256-nNjl1RC6A7CMt2ow/Z5K++iPDda3GmBcPlWphmTEiPA=";
   };
 
-  cargoHash = "sha256-ALRZK4o1jdWPfk412NxdyjElP9VBtgsyUnFq/UPGlF4=";
+  cargoHash = "sha256-Yjm2yOpMDMCVtdQrzed1zG67z2ASxjgUX52AqQ8/pGA=";
   doCheck = false;
 }
