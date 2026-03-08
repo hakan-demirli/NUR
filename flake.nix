@@ -46,12 +46,7 @@
     perSystem
     // {
       overlays.default =
-        final: prev:
-        let
-          system = prev.stdenv.hostPlatform.system;
-          systemPackages = perSystem.packages.${system} or { };
-          packagesToAdd = lib.filterAttrs (name: _: name != "default") systemPackages;
-        in
-        packagesToAdd;
+        final: _:
+        lib.genAttrs allPackageNames (name: final.callPackage (./pkgs + "/${name}/default.nix") { });
     };
 }
