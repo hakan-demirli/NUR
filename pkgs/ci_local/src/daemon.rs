@@ -32,14 +32,43 @@ struct ActiveRun {
 
 struct RepoState {
     last_seen_sha: Option<CommitSha>,
+    cancelled_shas: std::collections::HashSet<String>,
+    completed_shas: std::collections::HashSet<String>,
+    initialized: bool,
     run_counter: u32,
 }
 
 impl RepoState {
     fn new(repo_dir: &Path) -> Self {
         let max_on_disk = scan_max_run_number(repo_dir);
+
+        let mut cancelled_shas = std::collections::HashSet::new();
+        let mut completed_shas = std::collections::HashSet::new();
+        let mut last_seen_sha: Option<CommitSha> = None;
+
+        let summary_path = repo_dir.join("summary.json");
+        if let Ok(content) = std::fs::read_to_string(&summary_path) {
+            if let Ok(runs) = serde_json::from_str::<Vec<RunResult>>(&content) {
+                for run in &runs {
+                    if run.cancelled {
+                        cancelled_shas.insert(run.sha.as_str().to_string());
+                    } else if run.is_complete() {
+                        completed_shas.insert(run.sha.as_str().to_string());
+                    }
+                }
+                if let Some(last_run) = runs.last() {
+                    last_seen_sha = Some(last_run.sha.clone());
+                }
+            }
+        }
+
+        let initialized = last_seen_sha.is_some();
+
         Self {
-            last_seen_sha: None,
+            last_seen_sha,
+            cancelled_shas,
+            completed_shas,
+            initialized,
             run_counter: max_on_disk,
         }
     }
@@ -48,6 +77,11 @@ impl RepoState {
         let n = self.run_counter;
         self.run_counter = n.saturating_add(1);
         n
+    }
+
+    fn should_skip(&self, sha: &CommitSha) -> bool {
+        let s = sha.as_str();
+        self.cancelled_shas.contains(s) || self.completed_shas.contains(s)
     }
 }
 
@@ -139,6 +173,7 @@ pub async fn run(config: Config, socket_path: PathBuf) -> Result<(), CiError> {
 
     tracing::info!("daemon listening on {}", socket_path.display());
     tracing::info!("base_dir: {}", config.base_dir.path().display());
+    tracing::info!("max_parallel: {}", config.max_parallel.get());
     if let Some(t) = config.timeout_secs {
         tracing::info!("timeout: {}s per job", t);
     }
@@ -154,10 +189,26 @@ pub async fn run(config: Config, socket_path: PathBuf) -> Result<(), CiError> {
 
     let semaphore = Arc::new(Semaphore::new(config.max_parallel.get() as usize));
 
-    let state = Arc::new(Mutex::new(DaemonState::new(
-        &config.repos,
-        config.timeout_secs,
-    )));
+    let daemon_state = DaemonState::new(&config.repos, config.timeout_secs);
+    for (name, rs) in &daemon_state.repos {
+        if rs.initialized {
+            let sha_short = rs
+                .last_seen_sha
+                .as_ref()
+                .map(|s| s.short().to_string())
+                .unwrap_or_else(|| "?".to_string());
+            tracing::info!(
+                "  repo '{}': resuming from {}, {} completed, {} cancelled",
+                name,
+                sha_short,
+                rs.completed_shas.len(),
+                rs.cancelled_shas.len(),
+            );
+        } else {
+            tracing::info!("  repo '{}': fresh start (no prior runs)", name);
+        }
+    }
+    let state = Arc::new(Mutex::new(daemon_state));
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
     let ipc_state = Arc::clone(&state);
@@ -269,39 +320,114 @@ async fn poll_repo(
     state: &Arc<Mutex<DaemonState>>,
     semaphore: Arc<Semaphore>,
 ) -> Result<(), CiError> {
-    let commit_info = poller::latest_commit(&repo_cfg.source, &repo_cfg.branch)?;
+    let mirror_dir = repo_cfg.repo_dir.join(".mirror");
+    let latest = poller::latest_commit(&repo_cfg.source, &repo_cfg.branch)?;
 
     let mut guard = state.lock().await;
-    let repo_state =
-        guard
-            .repos
-            .get_mut(repo_cfg.name.as_str())
-            .ok_or_else(|| CiError::Internal {
-                detail: format!("no state for repo '{}'", repo_cfg.name),
-            })?;
 
-    if let Some(ref last) = repo_state.last_seen_sha {
-        if *last == commit_info.sha {
-            return Ok(());
+    let (to_launch, skipped) = {
+        let repo_state =
+            guard
+                .repos
+                .get_mut(repo_cfg.name.as_str())
+                .ok_or_else(|| CiError::Internal {
+                    detail: format!("no state for repo '{}'", repo_cfg.name),
+                })?;
+
+        if let Some(ref last) = repo_state.last_seen_sha {
+            if *last == latest.sha {
+                return Ok(());
+            }
         }
+
+        let commits_to_run = if !repo_state.initialized {
+            repo_state.initialized = true;
+            tracing::info!(
+                repo = %repo_cfg.name,
+                "first poll, starting from latest: {} {}",
+                latest.sha.short(),
+                latest.message,
+            );
+            vec![latest.clone()]
+        } else if let Some(ref last_sha) = repo_state.last_seen_sha {
+            match poller::list_commits_since(
+                &repo_cfg.source,
+                &repo_cfg.branch,
+                last_sha,
+                &mirror_dir,
+            ) {
+                Ok(commits) if !commits.is_empty() => {
+                    tracing::info!(
+                        repo = %repo_cfg.name,
+                        "discovered {} new commit(s) since {}",
+                        commits.len(),
+                        last_sha.short(),
+                    );
+                    commits
+                }
+                Ok(_) => {
+                    tracing::warn!(
+                        repo = %repo_cfg.name,
+                        "last known {} not reachable from branch tip; starting from latest {}",
+                        last_sha.short(),
+                        latest.sha.short(),
+                    );
+                    vec![latest.clone()]
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        repo = %repo_cfg.name,
+                        "failed to list commits since {}: {e}; falling back to latest",
+                        last_sha.short(),
+                    );
+                    vec![latest.clone()]
+                }
+            }
+        } else {
+            vec![latest.clone()]
+        };
+
+        repo_state.last_seen_sha = Some(latest.sha.clone());
+
+        let mut to_launch = Vec::new();
+        let mut skipped = 0usize;
+        for commit in &commits_to_run {
+            if repo_state.should_skip(&commit.sha) {
+                tracing::debug!(
+                    repo = %repo_cfg.name,
+                    "skipping {} (already completed or cancelled)",
+                    commit.sha.short(),
+                );
+                skipped += 1;
+                continue;
+            }
+            repo_state
+                .completed_shas
+                .insert(commit.sha.as_str().to_string());
+            to_launch.push(commit.clone());
+        }
+
+        (to_launch, skipped)
+    };
+
+    let queued = to_launch.len();
+    for commit in &to_launch {
+        launch_run(
+            &mut guard,
+            repo_cfg,
+            &commit.sha,
+            &commit.message,
+            Arc::clone(&semaphore),
+            false,
+        )?;
     }
 
-    tracing::info!(
-        repo = %repo_cfg.name,
-        "new commit: {} {}",
-        commit_info.sha.short(),
-        commit_info.message,
-    );
-    repo_state.last_seen_sha = Some(commit_info.sha.clone());
-
-    launch_run(
-        &mut guard,
-        repo_cfg,
-        &commit_info.sha,
-        &commit_info.message,
-        semaphore,
-        false,
-    )?;
+    if queued > 0 || skipped > 0 {
+        tracing::info!(
+            repo = %repo_cfg.name,
+            "queued {queued} run(s), skipped {skipped}",
+        );
+    }
 
     Ok(())
 }
@@ -710,8 +836,9 @@ async fn cancel_run(
     sha: &CommitSha,
     repo_filter: Option<&RepoName>,
 ) -> Response {
-    let guard = state.lock().await;
+    let mut guard = state.lock().await;
     let mut count = 0;
+    let mut affected_repos = Vec::new();
     for (key, run) in &guard.active {
         if key.sha != sha.as_str() {
             continue;
@@ -722,7 +849,14 @@ async fn cancel_run(
             }
         }
         let _ = run.cancel_tx.send(true);
+        affected_repos.push(run.repo_name.as_str().to_string());
         count += 1;
+    }
+    for repo_name in &affected_repos {
+        if let Some(repo_state) = guard.repos.get_mut(repo_name.as_str()) {
+            repo_state.cancelled_shas.insert(sha.as_str().to_string());
+            repo_state.completed_shas.remove(sha.as_str());
+        }
     }
     if count > 0 {
         Response::Ok {
@@ -739,10 +873,21 @@ async fn cancel_run(
 }
 
 async fn cancel_all_runs(state: &Arc<Mutex<DaemonState>>) -> Response {
-    let guard = state.lock().await;
+    let mut guard = state.lock().await;
     let count = guard.active.len();
+    let mut affected: Vec<(String, String)> = Vec::new();
     for run in guard.active.values() {
         let _ = run.cancel_tx.send(true);
+        affected.push((
+            run.repo_name.as_str().to_string(),
+            run.sha.as_str().to_string(),
+        ));
+    }
+    for (repo_name, sha_str) in &affected {
+        if let Some(repo_state) = guard.repos.get_mut(repo_name.as_str()) {
+            repo_state.cancelled_shas.insert(sha_str.clone());
+            repo_state.completed_shas.remove(sha_str.as_str());
+        }
     }
     Response::Ok {
         message: format!("cancellation requested for {count} active run(s)"),

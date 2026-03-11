@@ -243,7 +243,10 @@ impl MaxParallel {
 
 impl Default for MaxParallel {
     fn default() -> Self {
-        Self(4)
+        let cpus = std::thread::available_parallelism()
+            .map(|n| n.get() as u16)
+            .unwrap_or(4);
+        Self(cpus.max(1))
     }
 }
 
@@ -541,8 +544,11 @@ mod tests {
     }
 
     #[test]
-    fn max_parallel_default_is_4() {
-        assert_eq!(MaxParallel::default().get(), 4);
+    fn max_parallel_default_is_cpu_count() {
+        let expected = std::thread::available_parallelism()
+            .map(|n| n.get() as u16)
+            .unwrap_or(4);
+        assert_eq!(MaxParallel::default().get(), expected);
     }
 
     #[test]

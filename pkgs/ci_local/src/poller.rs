@@ -248,6 +248,133 @@ fn prepare_clone(url: &str, sha: &CommitSha, dest: &Path) -> Result<(), CiError>
     Ok(())
 }
 
+pub fn list_commits_since(
+    source: &GitSource,
+    branch: &BranchName,
+    since_sha: &CommitSha,
+    mirror_dir: &Path,
+) -> Result<Vec<CommitInfo>, CiError> {
+    let git_dir = match source {
+        GitSource::Local { path } => path.clone(),
+        _ => {
+            ensure_mirror(source, branch, mirror_dir)?;
+            mirror_dir.to_path_buf()
+        }
+    };
+
+    let range = format!("{}..{}", since_sha.as_str(), branch.as_str());
+    rev_list_in(&git_dir, &range)
+}
+
+fn ensure_mirror(
+    source: &GitSource,
+    branch: &BranchName,
+    mirror_dir: &Path,
+) -> Result<(), CiError> {
+    let url = match source {
+        GitSource::Remote { url } => url.clone(),
+        GitSource::Github { owner, repo } => format!("https://github.com/{owner}/{repo}"),
+        GitSource::Local { .. } => return Ok(()),
+    };
+
+    let git_dir = mirror_dir.join(".git");
+    if git_dir.is_dir() || mirror_dir.join("HEAD").exists() {
+        let output = Command::new("git")
+            .args([
+                "-C",
+                &mirror_dir.to_string_lossy(),
+                "fetch",
+                "origin",
+                &format!("+refs/heads/{0}:refs/heads/{0}", branch.as_str()),
+            ])
+            .output()
+            .map_err(|e| CiError::Git {
+                context: "mirror fetch",
+                detail: e.to_string(),
+            })?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            return Err(CiError::Git {
+                context: "mirror fetch",
+                detail: stderr,
+            });
+        }
+    } else {
+        let _ = std::fs::create_dir_all(mirror_dir);
+        let output = Command::new("git")
+            .args(["clone", "--bare", &url, &mirror_dir.to_string_lossy()])
+            .output()
+            .map_err(|e| CiError::Git {
+                context: "mirror clone",
+                detail: e.to_string(),
+            })?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            return Err(CiError::Git {
+                context: "mirror clone",
+                detail: stderr,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn rev_list_in(git_dir: &Path, range: &str) -> Result<Vec<CommitInfo>, CiError> {
+    let output = Command::new("git")
+        .args([
+            "-C",
+            &git_dir.to_string_lossy(),
+            "rev-list",
+            "--reverse",
+            "--format=%s",
+            range,
+        ])
+        .output()
+        .map_err(|e| CiError::Git {
+            context: "spawning git rev-list",
+            detail: e.to_string(),
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(CiError::Git {
+            context: "git rev-list",
+            detail: stderr,
+        });
+    }
+
+    parse_rev_list_output(&output.stdout)
+}
+
+fn parse_rev_list_output(stdout: &[u8]) -> Result<Vec<CommitInfo>, CiError> {
+    let text = String::from_utf8_lossy(stdout);
+    let mut commits = Vec::new();
+    let mut lines = text.lines();
+
+    while let Some(line) = lines.next() {
+        let sha_str = if let Some(stripped) = line.strip_prefix("commit ") {
+            stripped.trim().to_string()
+        } else {
+            line.trim().to_string()
+        };
+
+        let message = lines.next().unwrap_or("").trim().to_string();
+
+        if sha_str.is_empty() {
+            continue;
+        }
+
+        let sha = CommitSha::try_from(sha_str).map_err(|e| CiError::Git {
+            context: "parsing commit sha from rev-list",
+            detail: e.to_string(),
+        })?;
+
+        commits.push(CommitInfo { sha, message });
+    }
+
+    Ok(commits)
+}
+
 pub fn cleanup_worktree(source: &GitSource, dest: &Path) {
     if let GitSource::Local { path } = source {
         let _ = Command::new("git")
@@ -429,5 +556,40 @@ mod tests {
         assert!(!worktree_path.join("second.txt").exists());
 
         cleanup_worktree(&source, &worktree_path);
+    }
+
+    #[test]
+    fn list_commits_since_returns_new_commits() {
+        let (tmp, first_sha_str) = make_git_repo();
+        let second_sha_str = add_commit(tmp.path(), "second.txt", "second commit");
+        let third_sha_str = add_commit(tmp.path(), "third.txt", "third commit");
+
+        let source = GitSource::Local {
+            path: tmp.path().to_path_buf(),
+        };
+        let branch = BranchName::try_from("main".to_string()).unwrap();
+        let since = CommitSha::try_from(first_sha_str).unwrap();
+        let mirror = tempfile::tempdir().unwrap();
+
+        let commits = list_commits_since(&source, &branch, &since, mirror.path()).unwrap();
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].sha.as_str(), second_sha_str);
+        assert_eq!(commits[0].message, "second commit");
+        assert_eq!(commits[1].sha.as_str(), third_sha_str);
+        assert_eq!(commits[1].message, "third commit");
+    }
+
+    #[test]
+    fn list_commits_since_empty_when_up_to_date() {
+        let (tmp, sha_str) = make_git_repo();
+        let source = GitSource::Local {
+            path: tmp.path().to_path_buf(),
+        };
+        let branch = BranchName::try_from("main".to_string()).unwrap();
+        let since = CommitSha::try_from(sha_str).unwrap();
+        let mirror = tempfile::tempdir().unwrap();
+
+        let commits = list_commits_since(&source, &branch, &since, mirror.path()).unwrap();
+        assert!(commits.is_empty());
     }
 }

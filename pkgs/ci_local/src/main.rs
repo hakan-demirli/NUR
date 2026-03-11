@@ -79,6 +79,18 @@ fn main() {
                         }
                     },
                 };
+                let cfg = if let Some(j) = cli.jobs {
+                    let mp = types::MaxParallel::try_from(j).unwrap_or_else(|e| {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    });
+                    config::Config {
+                        max_parallel: mp,
+                        ..cfg
+                    }
+                } else {
+                    cfg
+                };
                 daemon::run(cfg, socket_path).await
             }
             cli::Command::Status { repo } => {

@@ -10,6 +10,9 @@ pub struct Cli {
     #[arg(short = 'r', long = "repo")]
     pub repo: Option<String>,
 
+    #[arg(short = 'j', long = "jobs")]
+    pub jobs: Option<u16>,
+
     #[command(subcommand)]
     pub command: Command,
 }

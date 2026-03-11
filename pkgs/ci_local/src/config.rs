@@ -320,7 +320,7 @@ source = "/tmp/fake-source"
         assert_eq!(cfg.repos.len(), 1);
         assert_eq!(cfg.repos[0].name.as_str(), "test-repo");
         assert_eq!(cfg.repos[0].branch.as_str(), "main");
-        assert_eq!(cfg.max_parallel.get(), 4);
+        assert_eq!(cfg.max_parallel.get(), MaxParallel::default().get());
         assert_eq!(
             cfg.poll_interval.as_duration(),
             std::time::Duration::from_secs(30)
@@ -637,7 +637,7 @@ source = "/tmp/src"
             cfg.poll_interval.as_duration(),
             std::time::Duration::from_secs(30)
         );
-        assert_eq!(cfg.max_parallel.get(), 4);
+        assert_eq!(cfg.max_parallel.get(), MaxParallel::default().get());
     }
 
     #[test]
