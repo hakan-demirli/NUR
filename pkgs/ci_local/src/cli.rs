@@ -7,29 +7,32 @@ pub struct Cli {
     #[arg(short, long)]
     pub config: Option<PathBuf>,
 
+    #[arg(short = 'r', long = "repo")]
+    pub repo: Option<String>,
+
     #[command(subcommand)]
     pub command: Command,
 }
 
 impl Cli {
-    pub fn resolve_config(&self) -> PathBuf {
+    pub fn resolve_config(&self) -> Option<PathBuf> {
         if let Some(ref p) = self.config {
-            return p.clone();
+            return Some(p.clone());
         }
 
         let local = PathBuf::from("ci-local.toml");
         if local.exists() {
-            return local;
+            return Some(local);
         }
 
         if let Some(config_dir) = dirs() {
             let global = config_dir.join("ci-local.toml");
             if global.exists() {
-                return global;
+                return Some(global);
             }
         }
 
-        local
+        None
     }
 }
 

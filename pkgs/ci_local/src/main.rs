@@ -64,8 +64,21 @@ fn main() {
     let result = rt.block_on(async {
         match cli.command {
             cli::Command::Start => {
-                let config_path = cli.resolve_config();
-                let cfg = config::Config::load(&config_path).unwrap_or_else(|e| exit(e));
+                let cfg = match cli.resolve_config() {
+                    Some(config_path) => {
+                        config::Config::load(&config_path).unwrap_or_else(|e| exit(e))
+                    }
+                    None => match cli.repo {
+                        Some(ref repo_source) => {
+                            config::Config::from_cli_repo(repo_source).unwrap_or_else(|e| exit(e))
+                        }
+                        None => {
+                            eprintln!("error: no config file found and no -r/--repo specified");
+                            eprintln!("either create a ci-local.toml or pass -r <path-or-url>");
+                            std::process::exit(1);
+                        }
+                    },
+                };
                 daemon::run(cfg, socket_path).await
             }
             cli::Command::Status { repo } => {

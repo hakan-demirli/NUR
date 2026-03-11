@@ -55,7 +55,7 @@ struct RawConfig {
     poll_interval_secs: Option<u64>,
     max_parallel: Option<u16>,
     timeout_secs: Option<u64>,
-    base_dir: String,
+    base_dir: Option<String>,
     #[serde(rename = "repo")]
     repos: Vec<RawRepo>,
 }
@@ -84,6 +84,40 @@ pub struct RepoConfig {
     pub repo_dir: PathBuf,
 }
 
+fn default_base_dir() -> Result<PathBuf, CiError> {
+    let home = std::env::var("HOME").map_err(|_| CiError::ConfigValidation {
+        detail: "HOME environment variable is not set".to_string(),
+    })?;
+    Ok(PathBuf::from(format!("{home}/.cache/ci-local")))
+}
+
+fn derive_repo_name(source: &str) -> String {
+    let trimmed = source.trim().trim_end_matches('/');
+
+    let name = trimmed
+        .rsplit('/')
+        .next()
+        .unwrap_or(trimmed)
+        .trim_end_matches(".git");
+
+    let sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+
+    if sanitized.is_empty() {
+        "repo".to_string()
+    } else {
+        sanitized
+    }
+}
+
 impl Config {
     pub fn load(path: &Path) -> Result<Self, CiError> {
         let content = std::fs::read_to_string(path).map_err(|e| CiError::ConfigIo {
@@ -91,6 +125,51 @@ impl Config {
             source: e,
         })?;
         Self::parse(&content, path)
+    }
+
+    pub fn from_cli_repo(source_str: &str) -> Result<Self, CiError> {
+        let base_dir_path = default_base_dir()?;
+        let base_dir = WorkDir::ensure(base_dir_path).map_err(|e| CiError::ConfigValidation {
+            detail: format!("base_dir: {e}"),
+        })?;
+
+        let source = GitSource::parse(source_str).map_err(|e| CiError::ConfigValidation {
+            detail: format!("repo source: {e}"),
+        })?;
+
+        let name_str = derive_repo_name(source_str);
+        let name = RepoName::try_from(name_str.clone()).map_err(|e| CiError::ConfigValidation {
+            detail: format!("repo name: {e}"),
+        })?;
+
+        let branch =
+            BranchName::try_from("main".to_string()).map_err(|e| CiError::ConfigValidation {
+                detail: e.to_string(),
+            })?;
+
+        let hash = source.short_hash();
+        let repo_dir = base_dir.join(&format!("{}-{}", name.as_str(), hash));
+
+        if let Err(e) = std::fs::create_dir_all(&repo_dir) {
+            return Err(CiError::ConfigValidation {
+                detail: format!("repo '{}': failed to create repo dir: {e}", name),
+            });
+        }
+
+        let repo = RepoConfig {
+            name,
+            source,
+            branch,
+            repo_dir,
+        };
+
+        Ok(Config {
+            poll_interval: PollInterval::default(),
+            max_parallel: MaxParallel::default(),
+            timeout_secs: None,
+            base_dir,
+            repos: vec![repo],
+        })
     }
 
     pub fn parse(toml_str: &str, origin: &Path) -> Result<Self, CiError> {
@@ -112,7 +191,11 @@ impl Config {
         };
 
         let base_dir_path = {
-            let p = PathBuf::from(expand_env(&raw.base_dir));
+            let raw_base = raw.base_dir.unwrap_or_else(|| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                format!("{home}/.cache/ci-local")
+            });
+            let p = PathBuf::from(expand_env(&raw_base));
             if p.is_absolute() {
                 p
             } else {
@@ -360,13 +443,17 @@ source = "/tmp/src"
     }
 
     #[test]
-    fn reject_missing_base_dir() {
+    fn missing_base_dir_uses_default() {
         let toml = r#"
 [[repo]]
 name = "proj"
 source = "/tmp/src"
 "#;
-        assert!(Config::parse(toml, Path::new("/x.toml")).is_err());
+        let cfg = Config::parse(toml, Path::new("/x.toml")).unwrap();
+        let home = std::env::var("HOME").unwrap();
+        let expected = PathBuf::from(format!("{home}/.cache/ci-local"));
+        assert_eq!(cfg.base_dir.path(), expected);
+        let _ = std::fs::remove_dir_all(&expected);
     }
 
     #[test]
@@ -495,5 +582,60 @@ source = "/tmp/src"
         let cfg = Config::parse(toml, Path::new("/x.toml")).unwrap();
         assert_eq!(cfg.base_dir.path(), tmp.path());
         std::env::remove_var("CI_LOCAL_TEST_BASE");
+    }
+
+    #[test]
+    fn derive_repo_name_from_local_path() {
+        assert_eq!(derive_repo_name("/home/me/my-project"), "my-project");
+    }
+
+    #[test]
+    fn derive_repo_name_from_trailing_slash() {
+        assert_eq!(derive_repo_name("/home/me/my-project/"), "my-project");
+    }
+
+    #[test]
+    fn derive_repo_name_from_github_slug() {
+        assert_eq!(derive_repo_name("octocat/hello-world"), "hello-world");
+    }
+
+    #[test]
+    fn derive_repo_name_strips_dotgit() {
+        assert_eq!(derive_repo_name("https://github.com/foo/bar.git"), "bar");
+    }
+
+    #[test]
+    fn derive_repo_name_sanitizes_special_chars() {
+        assert_eq!(derive_repo_name("/tmp/my project!"), "my-project-");
+    }
+
+    #[test]
+    fn from_cli_repo_local_path() {
+        let cfg = Config::from_cli_repo("/tmp/some-repo").unwrap();
+        assert_eq!(cfg.repos.len(), 1);
+        assert_eq!(cfg.repos[0].name.as_str(), "some-repo");
+        assert_eq!(cfg.repos[0].branch.as_str(), "main");
+        assert!(matches!(cfg.repos[0].source, GitSource::Local { .. }));
+        assert_eq!(
+            cfg.poll_interval.as_duration(),
+            std::time::Duration::from_secs(30)
+        );
+        assert_eq!(cfg.max_parallel.get(), 4);
+    }
+
+    #[test]
+    fn from_cli_repo_github_slug() {
+        let cfg = Config::from_cli_repo("octocat/hello-world").unwrap();
+        assert_eq!(cfg.repos.len(), 1);
+        assert_eq!(cfg.repos[0].name.as_str(), "hello-world");
+        assert!(matches!(cfg.repos[0].source, GitSource::Github { .. }));
+    }
+
+    #[test]
+    fn from_cli_repo_uses_default_base_dir() {
+        let cfg = Config::from_cli_repo("/tmp/test-repo").unwrap();
+        let home = std::env::var("HOME").unwrap();
+        let expected = PathBuf::from(format!("{home}/.cache/ci-local"));
+        assert_eq!(cfg.base_dir.path(), expected);
     }
 }
