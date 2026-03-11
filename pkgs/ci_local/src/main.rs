@@ -70,7 +70,8 @@ fn main() {
                     }
                     None => match cli.repo {
                         Some(ref repo_source) => {
-                            config::Config::from_cli_repo(repo_source).unwrap_or_else(|e| exit(e))
+                            config::Config::from_cli_repo(repo_source, cli.branch.as_deref())
+                                .unwrap_or_else(|e| exit(e))
                         }
                         None => {
                             eprintln!("error: no config file found and no -r/--repo specified");

@@ -127,7 +127,7 @@ impl Config {
         Self::parse(&content, path)
     }
 
-    pub fn from_cli_repo(source_str: &str) -> Result<Self, CiError> {
+    pub fn from_cli_repo(source_str: &str, branch_override: Option<&str>) -> Result<Self, CiError> {
         let base_dir_path = default_base_dir()?;
         let base_dir = WorkDir::ensure(base_dir_path).map_err(|e| CiError::ConfigValidation {
             detail: format!("base_dir: {e}"),
@@ -159,10 +159,10 @@ impl Config {
             detail: format!("repo name: {e}"),
         })?;
 
-        let branch =
-            BranchName::try_from("main".to_string()).map_err(|e| CiError::ConfigValidation {
-                detail: e.to_string(),
-            })?;
+        let branch_str = branch_override.unwrap_or("main").to_string();
+        let branch = BranchName::try_from(branch_str).map_err(|e| CiError::ConfigValidation {
+            detail: e.to_string(),
+        })?;
 
         let hash = source.short_hash();
         let repo_dir = base_dir.join(&format!("{}-{}", name.as_str(), hash));
@@ -628,7 +628,7 @@ source = "/tmp/src"
 
     #[test]
     fn from_cli_repo_local_path() {
-        let cfg = Config::from_cli_repo("/tmp/some-repo").unwrap();
+        let cfg = Config::from_cli_repo("/tmp/some-repo", None).unwrap();
         assert_eq!(cfg.repos.len(), 1);
         assert_eq!(cfg.repos[0].name.as_str(), "some-repo");
         assert_eq!(cfg.repos[0].branch.as_str(), "main");
@@ -641,8 +641,14 @@ source = "/tmp/src"
     }
 
     #[test]
+    fn from_cli_repo_with_branch_override() {
+        let cfg = Config::from_cli_repo("/tmp/some-repo", Some("develop")).unwrap();
+        assert_eq!(cfg.repos[0].branch.as_str(), "develop");
+    }
+
+    #[test]
     fn from_cli_repo_github_slug() {
-        let cfg = Config::from_cli_repo("octocat/hello-world").unwrap();
+        let cfg = Config::from_cli_repo("octocat/hello-world", None).unwrap();
         assert_eq!(cfg.repos.len(), 1);
         assert_eq!(cfg.repos[0].name.as_str(), "hello-world");
         assert!(matches!(cfg.repos[0].source, GitSource::Github { .. }));
@@ -650,7 +656,7 @@ source = "/tmp/src"
 
     #[test]
     fn from_cli_repo_uses_default_base_dir() {
-        let cfg = Config::from_cli_repo("/tmp/test-repo").unwrap();
+        let cfg = Config::from_cli_repo("/tmp/test-repo", None).unwrap();
         let home = std::env::var("HOME").unwrap();
         let expected = PathBuf::from(format!("{home}/.cache/ci-local"));
         assert_eq!(cfg.base_dir.path(), expected);
