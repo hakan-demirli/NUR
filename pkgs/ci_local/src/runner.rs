@@ -161,18 +161,22 @@ pub async fn execute_run(
             }
 
             {
-                let lock = results_for_dep_check.lock().await;
-                for &di in &dep_idxs {
-                    if let Some(ref dep_result) = lock[di] {
-                        if !dep_result.succeeded() {
-                            let result = make_skipped_job(&job);
-                            let _ = job_tx.send(result.clone()).await;
-                            let mut lock2 = results.lock().await;
-                            lock2[idx] = Some(result);
-                            let _ = done_tx.send(true);
-                            return;
-                        }
-                    }
+                let should_skip = {
+                    let lock = results_for_dep_check.lock().await;
+                    dep_idxs.iter().any(|&di| {
+                        lock[di]
+                            .as_ref()
+                            .map(|dep_result| !dep_result.succeeded())
+                            .unwrap_or(false)
+                    })
+                };
+                if should_skip {
+                    let result = make_skipped_job(&job);
+                    let _ = job_tx.send(result.clone()).await;
+                    let mut lock = results.lock().await;
+                    lock[idx] = Some(result);
+                    let _ = done_tx.send(true);
+                    return;
                 }
             }
 
