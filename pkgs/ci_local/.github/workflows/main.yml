@@ -1,0 +1,41 @@
+name: "Nix Build and Test"
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  fast-checks:
+    name: Fast Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Run Fast Checks
+        run: |
+          nix build -L \
+            .#checks.x86_64-linux.lint-deadnix \
+            .#checks.x86_64-linux.lint-statix \
+            .#checks.x86_64-linux.lint-formatting \
+            .#checks.x86_64-linux.lint-shebang \
+            .#checks.x86_64-linux.lint-shellcheck \
+            .#checks.x86_64-linux.lint-machete \
+            .#checks.x86_64-linux.lint-clippy
+
+  checks:
+    name: Check ${{ matrix.check }}
+    needs: fast-checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check:
+          - unit-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Run Check
+        run: nix build -L .#checks.x86_64-linux.${{ matrix.check }}

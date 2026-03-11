@@ -1,0 +1,6 @@
+base_dir = "/tmp/ci-local"
+
+[[repo]]
+name = "ci-local"
+source = "$PWD"
+branch = "main"
