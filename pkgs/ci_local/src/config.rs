@@ -133,11 +133,28 @@ impl Config {
             detail: format!("base_dir: {e}"),
         })?;
 
-        let source = GitSource::parse(source_str).map_err(|e| CiError::ConfigValidation {
+        let resolved = {
+            let trimmed = source_str.trim();
+            if trimmed.starts_with('.') || trimmed == "." {
+                let p = PathBuf::from(trimmed);
+                match p.canonicalize() {
+                    Ok(abs) => abs.to_string_lossy().into_owned(),
+                    Err(e) => {
+                        return Err(CiError::ConfigValidation {
+                            detail: format!("cannot resolve path '{}': {e}", trimmed),
+                        });
+                    }
+                }
+            } else {
+                trimmed.to_string()
+            }
+        };
+
+        let source = GitSource::parse(&resolved).map_err(|e| CiError::ConfigValidation {
             detail: format!("repo source: {e}"),
         })?;
 
-        let name_str = derive_repo_name(source_str);
+        let name_str = derive_repo_name(&resolved);
         let name = RepoName::try_from(name_str.clone()).map_err(|e| CiError::ConfigValidation {
             detail: format!("repo name: {e}"),
         })?;
