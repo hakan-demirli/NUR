@@ -138,7 +138,7 @@ fn render_repo_summary_md(repo_name: &str, runs: &[RunResult]) -> String {
     if runs.is_empty() {
         md.push_str("No runs recorded.\n");
     } else {
-        for (i, run) in runs.iter().enumerate() {
+        for (i, run) in runs.iter().rev().enumerate() {
             let ordinal = i + 1;
             let passed = run.jobs_passed();
             let total = run.total_jobs;
