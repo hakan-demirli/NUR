@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # ruff: noqa E402
 
+import argparse
+import json
 import logging
 import os
+import re
 import subprocess
 import time
 
@@ -18,9 +21,9 @@ AC_STATUS_FILE_PATH = "/sys/class/power_supply/AC/online"
 if not os.path.exists(AC_STATUS_FILE_PATH):
     AC_STATUS_FILE_PATH = "/sys/class/power_supply/ACAD/online"
 
-TARGET_MONITOR = "desc:Chimei Innolux Corporation 0x1521"
-MAX_REFRESH_RATE = 144
-MIN_REFRESH_RATE = 60
+TARGET_MONITOR = ""
+MAX_REFRESH_RATE = 0
+MIN_REFRESH_RATE = 0
 
 os.makedirs(os.path.dirname(LOG_FILE_PATH), exist_ok=True)
 logging.basicConfig(
@@ -28,6 +31,95 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
+
+
+def detect_edp_monitor() -> dict:
+    """Auto-detect the built-in laptop display (eDP-*) via hyprctl monitors."""
+    try:
+        result = subprocess.run(
+            ["hyprctl", "monitors", "-j"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        monitors = json.loads(result.stdout)
+    except (subprocess.CalledProcessError, FileNotFoundError, json.JSONDecodeError) as e:
+        logging.error(f"Failed to query hyprctl monitors: {e}")
+        return {}
+
+    for mon in monitors:
+        if mon.get("name", "").startswith("eDP-"):
+            width = mon.get("width", 0)
+            height = mon.get("height", 0)
+            available_modes = mon.get("availableModes", [])
+
+            rates = []
+            for mode in available_modes:
+                m = re.match(rf"^{width}x{height}@([\d.]+)Hz$", mode)
+                if m:
+                    rates.append(float(m.group(1)))
+
+            if not rates:
+                logging.error(
+                    f"No available modes found for eDP monitor '{mon['name']}'"
+                )
+                return {}
+
+            name = mon["name"]
+            make = mon.get("make", "")
+            model = mon.get("model", "")
+            desc = f"desc:{make} {model}".strip()
+
+            # Figure out which identifier the config file actually uses
+            target = name
+            try:
+                with open(CONFIG_FILE_PATH) as f:
+                    config_content = f.read()
+                if desc in config_content:
+                    target = desc
+                elif name in config_content:
+                    target = name
+                else:
+                    logging.warning(
+                        f"Neither '{desc}' nor '{name}' found in {CONFIG_FILE_PATH}."
+                    )
+            except FileNotFoundError:
+                logging.warning(f"Config file not found at {CONFIG_FILE_PATH}, using '{name}'.")
+
+            return {
+                "target_monitor": target,
+                "max_refresh_rate": int(max(rates)),
+                "min_refresh_rate": int(min(rates)),
+            }
+
+    logging.error("No eDP (built-in laptop) monitor found.")
+    return {}
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Auto-switch monitor refresh rate based on AC power status (Hyprland).",
+    )
+    parser.add_argument(
+        "--monitor",
+        type=str,
+        default=None,
+        help='Monitor identifier as used in monitors.conf (e.g. "desc:Samsung Display Corp. 0x41AA"). '
+        "Auto-detected from eDP if not specified.",
+    )
+    parser.add_argument(
+        "--max-rate",
+        type=int,
+        default=None,
+        help="Refresh rate to use on AC power. Auto-detected if not specified.",
+    )
+    parser.add_argument(
+        "--min-rate",
+        type=int,
+        default=None,
+        help="Refresh rate to use on battery. Auto-detected if not specified.",
+    )
+    return parser.parse_args()
 
 
 def sed(regex: str, path: str):
@@ -170,7 +262,30 @@ def ac_event_handler(client, action, device, user_data):
 
 
 def main():
+    global TARGET_MONITOR, MAX_REFRESH_RATE, MIN_REFRESH_RATE
+
+    args = parse_args()
+    detected = detect_edp_monitor()
+
+    TARGET_MONITOR = args.monitor or detected.get("target_monitor", "")
+    MAX_REFRESH_RATE = args.max_rate or detected.get("max_refresh_rate", 0)
+    MIN_REFRESH_RATE = args.min_rate or detected.get("min_refresh_rate", 0)
+
+    if not TARGET_MONITOR or not MAX_REFRESH_RATE or not MIN_REFRESH_RATE:
+        logging.error(
+            "Could not determine monitor configuration. "
+            "Either pass --monitor, --max-rate, --min-rate or ensure an eDP monitor is connected."
+        )
+        print(
+            "Error: Could not auto-detect monitor. "
+            "Use --monitor, --max-rate, --min-rate to specify manually."
+        )
+        exit(1)
+
     logging.info("--- Auto Refresh Rate Service Started ---")
+    logging.info(
+        f"Monitor: {TARGET_MONITOR}, Max: {MAX_REFRESH_RATE}Hz, Min: {MIN_REFRESH_RATE}Hz"
+    )
     client = GUdev.Client(subsystems=["power_supply"])
     check_initial_power_status()
     client.connect("uevent", ac_event_handler, None)
