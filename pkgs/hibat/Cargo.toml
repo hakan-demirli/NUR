@@ -1,0 +1,28 @@
+[package]
+name = "hibat"
+version = "0.1.0"
+edition = "2021"
+description = "Battery history tracker and visualizer"
+
+[[bin]]
+name = "hibat"
+path = "src/main.rs"
+
+[[bin]]
+name = "hibat-collector"
+path = "src/bin/collector.rs"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+eframe = { version = "0.34", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+egui = { version = "0.34", default-features = false }
+egui_plot = "0.35"
+rusqlite = { version = "0.34", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
