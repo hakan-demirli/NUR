@@ -6,7 +6,9 @@ import json
 import logging
 import os
 import re
+import stat
 import subprocess
+import tempfile
 import time
 
 import gi
@@ -122,6 +124,60 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def ensure_writable_config(path: str):
+    """If path is a symlink or read-only, replace it with a writable copy.
+
+    Reads the content from the (possibly symlinked/read-only) file,
+    writes it to a new temp file in the same directory, then atomically
+    swaps it into place via os.rename().
+    """
+    needs_replace = os.path.islink(path)
+    if not needs_replace:
+        try:
+            needs_replace = not os.access(path, os.W_OK)
+        except OSError:
+            needs_replace = True
+
+    if not needs_replace:
+        return
+
+    logging.info(
+        f"Config file at {path} is {'a symlink' if os.path.islink(path) else 'read-only'}. "
+        "Replacing with a writable copy."
+    )
+
+    try:
+        with open(path) as f:
+            content = f.read()
+    except Exception as e:
+        logging.error(f"Failed to read config for copy: {e}")
+        raise
+
+    config_dir = os.path.dirname(path)
+    fd, tmp_path = tempfile.mkstemp(dir=config_dir, prefix=".monitors_", suffix=".conf")
+    try:
+        os.write(fd, content.encode())
+        os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)  # 0o644
+        os.close(fd)
+
+        if os.path.islink(path):
+            os.unlink(path)
+
+        os.rename(tmp_path, path)
+        logging.info(f"Replaced {path} with a writable copy.")
+    except Exception as e:
+        logging.error(f"Failed to replace config file: {e}")
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def sed(regex: str, path: str):
     """Runs a sed command and logs its outcome."""
     command = ["sed", "-i", regex, path]
@@ -183,6 +239,8 @@ def set_refresh_rate(target_rate: int):
         return
 
     try:
+        ensure_writable_config(CONFIG_FILE_PATH)
+
         with open(CONFIG_FILE_PATH) as file:
             file_lines = file.readlines()
 
