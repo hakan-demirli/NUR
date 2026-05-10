@@ -1,0 +1,247 @@
+diff --git a/src/credentials.ts b/src/credentials.ts
+index 31f8305..5977fac 100644
+--- a/src/credentials.ts
++++ b/src/credentials.ts
+@@ -9,6 +9,7 @@ import {
+ import { homedir, tmpdir } from "node:os"
+ import { dirname, join } from "node:path"
+ import {
++  getHomeForAccountSource,
+   readAllClaudeAccounts,
+   refreshAccount,
+   writeBackCredentials,
+@@ -242,23 +243,37 @@ export function refreshViaOAuth(
+   }
+ }
+ 
+-function refreshViaCli(): void {
++function refreshViaCli(account?: ClaudeAccount): void {
+   const maxAttempts = 2
++  const accountHome = account ? getHomeForAccountSource(account.source) : null
++  const refreshWrapper = process.env.OPENCODE_CLAUDE_AUTH_REFRESH_WRAPPER ?? "claude"
+   for (let i = 0; i < maxAttempts; i++) {
+-    log("refresh_started", { source: "cli", attempt: i + 1 })
++    log("refresh_started", {
++      source: "cli",
++      refreshWrapper,
++      accountSource: account?.source,
++      accountHome,
++      attempt: i + 1,
++    })
+     try {
+-      execSync("claude -p . --model haiku", {
++      execFileSync(refreshWrapper, ["-p", ".", "--model", "haiku"], {
+         timeout: 60_000,
+         encoding: "utf-8",
+-        env: { ...process.env, TERM: "dumb" },
++        env: {
++          ...process.env,
++          OPENCODE_CLAUDE_AUTH_ACCOUNT_SOURCE: account?.source ?? "",
++          ...(accountHome ? { OPENCODE_CLAUDE_AUTH_ACCOUNT_HOME: accountHome } : {}),
++          TERM: "dumb",
++        },
+         stdio: "ignore",
+         cwd: tmpdir(),
+       })
+-      log("refresh_success", { source: "cli" })
++      log("refresh_success", { source: "cli", accountSource: account?.source })
+       return
+     } catch (err) {
+       log("refresh_failed", {
+         source: "cli",
++        accountSource: account?.source,
+         attempt: i + 1,
+         error: err instanceof Error ? err.message : String(err),
+       })
+@@ -294,7 +309,7 @@ export function refreshIfNeeded(
+ 
+   // Fall back to CLI-based refresh (consumes Haiku tokens)
+   log("refresh_fallback_cli", { source: target.source })
+-  refreshViaCli()
++  refreshViaCli(target)
+   const refreshed = refreshAccount(target.source)
+   if (refreshed && refreshed.expiresAt > Date.now() + 60_000) {
+     target.credentials = refreshed
+diff --git a/src/index.ts b/src/index.ts
+index d60cfb1..34c0fad 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -527,6 +527,8 @@ const plugin: Plugin = async () => {
+             const sourceDescription =
+               chosen.source === "file"
+                 ? "credentials file (~/.claude/.credentials.json)"
++                : chosen.source.startsWith("home:")
++                  ? `credentials file (${chosen.source.slice(5)}/.claude/.credentials.json)`
+                 : "macOS Keychain"
+ 
+             return {
+diff --git a/src/keychain.ts b/src/keychain.ts
+index fb3fa18..c2e27b9 100644
+--- a/src/keychain.ts
++++ b/src/keychain.ts
+@@ -1,7 +1,14 @@
+ import { execFileSync, execSync } from "node:child_process"
+-import { chmodSync, readFileSync, writeFileSync } from "node:fs"
++import {
++  chmodSync,
++  existsSync,
++  readdirSync,
++  readFileSync,
++  statSync,
++  writeFileSync,
++} from "node:fs"
+ import { homedir } from "node:os"
+-import { join } from "node:path"
++import { delimiter, join } from "node:path"
+ import { log } from "./logger.ts"
+ 
+ export interface ClaudeCredentials {
+@@ -18,6 +25,7 @@ export interface ClaudeAccount {
+ }
+ 
+ const PRIMARY_SERVICE = "Claude Code-credentials"
++const HOME_SOURCE_PREFIX = "home:"
+ 
+ function parseCredentials(raw: string): ClaudeCredentials | null {
+   let parsed: unknown
+@@ -173,15 +181,80 @@ function listClaudeKeychainServices(): string[] {
+   }
+ }
+ 
+-function readCredentialsFile(): ClaudeCredentials | null {
++function expandHomePath(path: string): string {
++  if (path === "~") return homedir()
++  if (path.startsWith("~/")) return join(homedir(), path.slice(2))
++  return path
++}
++
++function getDefaultClaudeHomes(): string[] {
++  const root = join(homedir(), ".cache", "claude-multi")
++  try {
++    if (!existsSync(root)) return []
++    return readdirSync(root)
++      .map((entry) => join(root, entry))
++      .filter((entry) => {
++        try {
++          return statSync(entry).isDirectory()
++        } catch {
++          return false
++        }
++      })
++  } catch {
++    return []
++  }
++}
++
++function getExtraClaudeHomes(): string[] {
++  const seen = new Set<string>([homedir()])
++  const homes: string[] = []
++
++  for (const home of getDefaultClaudeHomes()) {
++    if (seen.has(home)) continue
++    seen.add(home)
++    homes.push(home)
++  }
++
++  const raw = process.env.OPENCODE_CLAUDE_AUTH_EXTRA_HOMES
++  if (!raw) return homes
++
++  for (const entry of raw.split(delimiter)) {
++    const home = expandHomePath(entry.trim())
++    if (!home || seen.has(home)) continue
++    seen.add(home)
++    homes.push(home)
++  }
++
++  return homes
++}
++
++export function getHomeForAccountSource(source: string): string | null {
++  if (source === "file") return homedir()
++  if (source.startsWith(HOME_SOURCE_PREFIX)) {
++    return source.slice(HOME_SOURCE_PREFIX.length)
++  }
++  return null
++}
++
++function getCredentialsPathForSource(source: string): string | null {
++  const home = getHomeForAccountSource(source)
++  return home ? join(home, ".claude", ".credentials.json") : null
++}
++
++function readCredentialsFile(source = "file"): ClaudeCredentials | null {
+   try {
+-    const credPath = join(homedir(), ".claude", ".credentials.json")
++    const credPath = getCredentialsPathForSource(source)
++    if (!credPath) return null
+     const raw = readFileSync(credPath, "utf-8")
+     const creds = parseCredentials(raw)
+-    log("credentials_file_read", { success: creds !== null })
++    log("credentials_file_read", {
++      source,
++      path: credPath,
++      success: creds !== null,
++    })
+     return creds
+   } catch {
+-    log("credentials_file_read", { success: false })
++    log("credentials_file_read", { source, success: false })
+     return null
+   }
+ }
+@@ -210,10 +283,28 @@ export function buildAccountLabels(credsList: ClaudeCredentials[]): string[] {
+ 
+ export function readAllClaudeAccounts(): ClaudeAccount[] {
+   if (process.platform !== "darwin") {
+-    const creds = readCredentialsFile()
+-    if (!creds) return []
+-    const [label] = buildAccountLabels([creds])
+-    return [{ label, source: "file", credentials: creds }]
++    const rawAccounts: Array<{
++      source: string
++      credentials: ClaudeCredentials
++    }> = []
++
++    const defaultCreds = readCredentialsFile("file")
++    if (defaultCreds) {
++      rawAccounts.push({ source: "file", credentials: defaultCreds })
++    }
++
++    for (const home of getExtraClaudeHomes()) {
++      const source = `${HOME_SOURCE_PREFIX}${home}`
++      const creds = readCredentialsFile(source)
++      if (creds) rawAccounts.push({ source, credentials: creds })
++    }
++
++    const labels = buildAccountLabels(rawAccounts.map((a) => a.credentials))
++    return rawAccounts.map((a, i) => ({
++      label: labels[i],
++      source: a.source,
++      credentials: a.credentials,
++    }))
+   }
+ 
+   const services = listClaudeKeychainServices()
+@@ -293,9 +384,9 @@ export function writeBackCredentials(
+     expiresAt: creds.expiresAt,
+   }
+ 
+-  if (source === "file") {
++  const credPath = getCredentialsPathForSource(source)
++  if (credPath) {
+     try {
+-      const credPath = join(homedir(), ".claude", ".credentials.json")
+       const raw = readFileSync(credPath, "utf-8")
+       const updated = updateCredentialBlob(raw, newCreds)
+       if (!updated) return false
+@@ -347,9 +438,7 @@ export function writeBackCredentials(
+ }
+ 
+ export function refreshAccount(source: string): ClaudeCredentials | null {
+-  if (source === "file") {
+-    return readCredentialsFile()
+-  }
++  if (getCredentialsPathForSource(source)) return readCredentialsFile(source)
+   const raw = readKeychainService(source)
+   if (!raw) return null
+   return parseCredentials(raw)
