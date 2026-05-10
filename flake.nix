@@ -23,7 +23,10 @@
           (
             system:
             let
-              pkgs = import nixpkgs { inherit system; };
+              pkgs = import nixpkgs {
+                inherit system;
+                config.allowUnfree = true;
+              };
 
               allMyPackages = lib.genAttrs allPackageNames (
                 name: pkgs.callPackage (./pkgs + "/${name}/default.nix") { }
