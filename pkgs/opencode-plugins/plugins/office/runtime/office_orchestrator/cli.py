@@ -11,6 +11,7 @@ import sys
 import time
 from typing import Any
 
+from .client import OpenCodeClient
 from .runtime import project_runtime
 
 
@@ -49,7 +50,7 @@ def daemon_running(runtime) -> bool:
 
 
 def start_daemon(args: argparse.Namespace) -> dict[str, Any]:
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     if daemon_running(runtime):
         return daemon_request(runtime, "GET", "/status")
 
@@ -61,6 +62,7 @@ def start_daemon(args: argparse.Namespace) -> dict[str, Any]:
                 sys.argv[0],
                 "--directory",
                 args.directory,
+                *(["--session-id", args.session_id] if args.session_id else []),
                 *(["--base-url", args.base_url] if args.base_url else []),
                 *(["--password", args.password] if args.password else []),
                 *(["--username", args.username] if args.username else []),
@@ -90,9 +92,10 @@ def ensure_daemon(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     payload: dict[str, Any] = {
         "directory": args.directory,
+        "session_id": args.session_id,
         "socket": str(runtime.socket_path),
         "daemon_running": daemon_running(runtime),
     }
@@ -109,12 +112,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_paths(args: argparse.Namespace) -> int:
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     if daemon_running(runtime):
         print(json.dumps(daemon_request(runtime, "GET", "/paths"), indent=2, sort_keys=True))
     else:
         print(json.dumps({
             "directory": args.directory,
+            "session_id": args.session_id,
             "runtime_dir": str(runtime.root),
             "socket": str(runtime.socket_path),
             "state_file": str(runtime.state_path),
@@ -150,7 +154,7 @@ def _resolve_diagnostic_log(runtime) -> Any:
 
 
 def cmd_logs(args: argparse.Namespace) -> int:
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     diag_path = _resolve_diagnostic_log(runtime)
     diag_lines = _read_tail(diag_path, args.lines) if diag_path else []
     if daemon_running(runtime):
@@ -178,7 +182,7 @@ def cmd_logs(args: argparse.Namespace) -> int:
 
 
 def cmd_ps(args: argparse.Namespace) -> int:
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     if not daemon_running(runtime):
         print(json.dumps({"daemon_running": False}, indent=2, sort_keys=True))
         return 0
@@ -188,14 +192,14 @@ def cmd_ps(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     ensure_daemon(args)
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     print(json.dumps(daemon_request(runtime, "GET", "/status"), indent=2, sort_keys=True))
     return 0
 
 
 def cmd_summary(args: argparse.Namespace) -> int:
     ensure_daemon(args)
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     print(json.dumps(daemon_request(runtime, "GET", "/summary"), indent=2, sort_keys=True))
     return 0
 
@@ -211,6 +215,7 @@ def cmd_daemon_run(args: argparse.Namespace) -> int:
     argv = [
         "--directory",
         args.directory,
+        *(["--session-id", args.session_id] if args.session_id else []),
         "--socket-path",
         args.socket_path,
     ]
@@ -223,17 +228,128 @@ def cmd_daemon_run(args: argparse.Namespace) -> int:
     return daemon_main(argv)
 
 
+def process_descendants(root_pid: int) -> list[int]:
+    children: dict[int, list[int]] = {}
+    try:
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            pid = int(entry)
+            try:
+                with open(f"/proc/{pid}/status", "r", encoding="utf-8") as fh:
+                    ppid = 0
+                    for line in fh:
+                        if line.startswith("PPid:"):
+                            ppid = int(line.split()[1])
+                            break
+            except (FileNotFoundError, ProcessLookupError, PermissionError):
+                continue
+            children.setdefault(ppid, []).append(pid)
+    except FileNotFoundError:
+        return [root_pid]
+
+    result: list[int] = []
+    stack = [root_pid]
+    while stack:
+        pid = stack.pop()
+        if pid == os.getpid():
+            continue
+        result.append(pid)
+        stack.extend(children.get(pid, []))
+    return result
+
+
+def kill_family(root_pid: int) -> list[int]:
+    try:
+        pgid = os.getpgid(root_pid)
+    except ProcessLookupError:
+        return []
+
+    targets = process_descendants(root_pid)
+    killed: list[int] = []
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+        killed.extend(targets)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+    deadline = time.time() + 1.5
+    while time.time() < deadline:
+        try:
+            os.kill(root_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+
+    for pid in process_descendants(root_pid):
+        try:
+            os.kill(pid, signal.SIGKILL)
+            killed.append(pid)
+        except ProcessLookupError:
+            continue
+
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    return killed
+
+
+def abort_judge_from_state(runtime) -> list[str]:
+    if not runtime.state_path.exists():
+        return []
+    try:
+        state = json.loads(runtime.state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+    state["enabled"] = False
+    try:
+        runtime.state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+    judge_session_id = state.get("judge_session_id")
+    base_url = state.get("opencode_base_url")
+    if not judge_session_id or not base_url:
+        return []
+
+    try:
+        client = OpenCodeClient(
+            base_url,
+            directory=runtime.directory,
+            password=state.get("opencode_password"),
+            username=state.get("opencode_username") or "opencode",
+            timeout=5.0,
+        )
+        client.abort_session(judge_session_id)
+        return [judge_session_id]
+    except Exception:
+        return []
+
+
 def cmd_daemon_stop(args: argparse.Namespace) -> int:
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
+    pids: list[int] = []
+    aborted_sessions = abort_judge_from_state(runtime)
+
+    # Snapshot all known pids before killing anything. The old implementation
+    # posted /stop first; the daemon removed its pid file during graceful
+    # shutdown, so the hard-kill phase often reported killed_pids=[].
     if daemon_running(runtime):
         try:
-            daemon_request(runtime, "POST", "/stop", body={}, timeout=5.0)
+            payload = daemon_request(runtime, "GET", "/processes", timeout=2.0)
+            for key in ("daemon_pid", "serve_pid"):
+                value = payload.get(key)
+                if value:
+                    pids.append(int(value))
+            for process in payload.get("processes", []):
+                value = process.get("pid")
+                if value:
+                    pids.append(int(value))
         except Exception:
             pass
 
-    # Always converge to a fully stopped state, no negotiation. Read the pid
-    # file (if still around) and SIGKILL the daemon, then sweep its tree.
-    pids: list[int] = []
     if runtime.pid_path.exists():
         try:
             pids.append(int(runtime.pid_path.read_text(encoding="utf-8").strip()))
@@ -250,29 +366,31 @@ def cmd_daemon_stop(args: argparse.Namespace) -> int:
     if serve_pid:
         pids.append(int(serve_pid))
 
+    pids = list(dict.fromkeys(pid for pid in pids if pid != os.getpid()))
     killed: list[int] = []
     for pid in pids:
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.kill(pid, sig)
-                killed.append(pid)
-            except ProcessLookupError:
-                break
-            time.sleep(0.2)
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                break
+        killed.extend(kill_family(pid))
 
     runtime.socket_path.unlink(missing_ok=True)
     runtime.pid_path.unlink(missing_ok=True)
-    print(json.dumps({"ok": True, "killed_pids": killed}, indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "aborted_sessions": aborted_sessions,
+                "attempted_pids": pids,
+                "killed_pids": list(dict.fromkeys(killed)),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 
 def cmd_judge_on(args: argparse.Namespace) -> int:
     ensure_daemon(args)
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     payload = daemon_request(runtime, "POST", "/judge/on", body={"worker_session_id": args.worker_session_id})
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
@@ -280,41 +398,41 @@ def cmd_judge_on(args: argparse.Namespace) -> int:
 
 def cmd_judge_off(args: argparse.Namespace) -> int:
     ensure_daemon(args)
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     print(json.dumps(daemon_request(runtime, "POST", "/judge/off"), indent=2, sort_keys=True))
     return 0
 
 
 def cmd_judge_pause(args: argparse.Namespace) -> int:
     ensure_daemon(args)
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     print(json.dumps(daemon_request(runtime, "POST", "/judge/pause", body={}), indent=2, sort_keys=True))
     return 0
 
 
 def cmd_judge_resume(args: argparse.Namespace) -> int:
     ensure_daemon(args)
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     print(json.dumps(daemon_request(runtime, "POST", "/judge/resume", body={}), indent=2, sort_keys=True))
     return 0
 
 
 def cmd_judge_queue(args: argparse.Namespace) -> int:
     ensure_daemon(args)
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     print(json.dumps(daemon_request(runtime, "GET", "/judge/queue"), indent=2, sort_keys=True))
     return 0
 
 
 def cmd_poke(args: argparse.Namespace) -> int:
     ensure_daemon(args)
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     print(json.dumps(daemon_request(runtime, "POST", "/judge/poke", body={"reason": args.reason}), indent=2, sort_keys=True))
     return 0
 
 
 def cmd_worker_id(args: argparse.Namespace) -> int:
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     if daemon_running(runtime):
         state = daemon_request(runtime, "GET", "/status").get("state", {})
         print(state.get("worker_session_id") or "")
@@ -327,7 +445,7 @@ def cmd_worker_id(args: argparse.Namespace) -> int:
 
 
 def cmd_judge_id(args: argparse.Namespace) -> int:
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     if daemon_running(runtime):
         state = daemon_request(runtime, "GET", "/status").get("state", {})
         print(state.get("judge_session_id") or "")
@@ -343,6 +461,7 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="opencode-office")
     root.add_argument("--base-url", default=os.environ.get("OPENCODE_BASE_URL"))
     root.add_argument("--directory", default=os.getcwd())
+    root.add_argument("--session-id", default=os.environ.get("OPENCODE_SESSION_ID"))
     root.add_argument("--password", default=os.environ.get("OPENCODE_SERVER_PASSWORD"))
     root.add_argument("--username", default=os.environ.get("OPENCODE_SERVER_USERNAME", "opencode"))
     root.add_argument("--timeout", type=float, default=30.0)

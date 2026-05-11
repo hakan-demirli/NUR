@@ -9,6 +9,7 @@ from pathlib import Path
 @dataclass(slots=True)
 class ProjectRuntime:
     directory: str
+    session_id: str | None
     root: Path
     socket_path: Path
     state_path: Path
@@ -19,13 +20,15 @@ class ProjectRuntime:
     diagnostic_log_symlink: Path
 
 
-def project_runtime(directory: str, *, base_dir: str | None = None) -> ProjectRuntime:
+def project_runtime(directory: str, *, session_id: str | None = None, base_dir: str | None = None) -> ProjectRuntime:
     directory = os.path.abspath(directory)
-    digest = hashlib.md5(directory.encode("utf-8")).hexdigest()
+    key = directory if not session_id else f"{directory}\0{session_id}"
+    digest = hashlib.md5(key.encode("utf-8")).hexdigest()
     root = Path(base_dir or os.path.join(Path.home(), ".cache", "opencode_office_py")) / digest
     root.mkdir(parents=True, exist_ok=True)
     return ProjectRuntime(
         directory=directory,
+        session_id=session_id,
         root=root,
         socket_path=root / "daemon.sock",
         state_path=root / "state.json",

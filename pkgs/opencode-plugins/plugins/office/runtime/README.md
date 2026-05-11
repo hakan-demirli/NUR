@@ -1,11 +1,11 @@
 # Office Judge Plugin
 
-Tracked home for the OpenCode `/judge` plugin and the per-project office daemon that backs it.
+Tracked home for the OpenCode `/judge` plugin and the per-session office daemon that backs it.
 
 ## Layout
 
-- `office.ts` - thin `/judge ...` plugin that talks to the project daemon
-- `office_orchestrator/` - Python implementation of the per-project daemon and a small CLI client
+- `office.ts` - thin `/judge ...` plugin that talks to the session daemon
+- `office_orchestrator/` - Python implementation of the per-session daemon and a small CLI client
 - `pyproject.toml` - Python package metadata
 
 ## Live wiring
@@ -19,9 +19,9 @@ Edit `office.ts` here and OpenCode picks it up via the symlink.
 ## Architecture
 
 - The plugin owns only the `/judge` UX inside OpenCode. It does not orchestrate.
-- The per-project office daemon is the canonical control plane. It speaks plain HTTP/JSON over a Unix domain socket at `~/.cache/opencode_office_py/<project-hash>/daemon.sock`.
+- The office daemon is keyed by worker session id. It speaks plain HTTP/JSON over a Unix domain socket at `~/.cache/opencode_office_py/<directory-and-session-hash>/daemon.sock`.
 - The Python CLI is a thin convenience wrapper around the same daemon API.
-- The daemon auto-launches its own `opencode serve` child for the project.
+- The TUI plugin passes the current OpenCode serve URL to the daemon, so normal plugin use does not launch an extra `opencode serve` child. CLI-only use can still auto-launch one.
 - Worker and judge sessions are normal OpenCode sessions. You can attach manually with `opencode -s <id>` if you want, but the plugin does this for you via TUI session-select events.
 
 ## `/judge` commands
@@ -30,7 +30,7 @@ Edit `office.ts` here and OpenCode picks it up via the symlink.
 - `/judge off` - disable supervision; sessions stay alive
 - `/judge pause` - daemon keeps running and watching, but suppresses judge nudges. Worker turn / idle events that would have nudged the judge are queued.
 - `/judge resume` - flip back to active. Coalesces queued events by worker message id and replays them as a single nudge per group, with the original reasons preserved.
-- `/judge kill` - hard kill the daemon, its `opencode serve`, and any descendants. No negotiation.
+- `/judge kill` - abort the judge session's active run, hard kill the daemon, its owned `opencode serve`, and any descendants. No negotiation.
 - `/judge status` - one-line summary of worker and judge: ids, model, token usage, last nudge, and pause state with queued event count
 - `/judge worker` - switch the OpenCode TUI to the worker session
 - `/judge judge` - switch the OpenCode TUI to the judge session
@@ -43,7 +43,7 @@ Edit `office.ts` here and OpenCode picks it up via the symlink.
 Anyone can hit it directly with `curl --unix-socket`. The plugin and the convenience CLI are just clients.
 
 ```bash
-SOCK=~/.cache/opencode_office_py/<project-hash>/daemon.sock
+SOCK=~/.cache/opencode_office_py/<directory-and-session-hash>/daemon.sock
 
 curl -s --unix-socket "$SOCK" http://localhost/health
 curl -s --unix-socket "$SOCK" http://localhost/status     # full state
@@ -74,15 +74,15 @@ The daemon will automatically compact the judge before a review nudge if the jud
 ## Convenience Python CLI
 
 ```bash
-python3 -m office_orchestrator.cli --directory /path/to/repo doctor
-python3 -m office_orchestrator.cli --directory /path/to/repo daemon-start
-python3 -m office_orchestrator.cli --directory /path/to/repo daemon-stop      # hard, no negotiation
-python3 -m office_orchestrator.cli --directory /path/to/repo judge-on <ses>
-python3 -m office_orchestrator.cli --directory /path/to/repo summary
-python3 -m office_orchestrator.cli --directory /path/to/repo logs --lines 200
-python3 -m office_orchestrator.cli --directory /path/to/repo ps
-python3 -m office_orchestrator.cli --directory /path/to/repo worker-id
-python3 -m office_orchestrator.cli --directory /path/to/repo judge-id
+python3 -m office_orchestrator.cli --directory /path/to/repo --session-id <worker-ses> doctor
+python3 -m office_orchestrator.cli --directory /path/to/repo --session-id <worker-ses> daemon-start
+python3 -m office_orchestrator.cli --directory /path/to/repo --session-id <worker-ses> daemon-stop      # hard, no negotiation
+python3 -m office_orchestrator.cli --directory /path/to/repo --session-id <worker-ses> judge-on <worker-ses>
+python3 -m office_orchestrator.cli --directory /path/to/repo --session-id <worker-ses> summary
+python3 -m office_orchestrator.cli --directory /path/to/repo --session-id <worker-ses> logs --lines 200
+python3 -m office_orchestrator.cli --directory /path/to/repo --session-id <worker-ses> ps
+python3 -m office_orchestrator.cli --directory /path/to/repo --session-id <worker-ses> worker-id
+python3 -m office_orchestrator.cli --directory /path/to/repo --session-id <worker-ses> judge-id
 ```
 
 The CLI talks to the same Unix socket described above, so it is fully optional.

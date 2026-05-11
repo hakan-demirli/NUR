@@ -29,6 +29,7 @@ JUDGE_NUDGE_COOLDOWN_MS = 15_000
 @dataclass(slots=True)
 class OfficeState:
     directory: str
+    session_id: str | None = None
     worker_session_id: str | None = None
     judge_session_id: str | None = None
     last_worker_message_id: str | None = None
@@ -61,8 +62,10 @@ class OfficeOrchestrator:
 
     def load_state(self) -> OfficeState:
         if not self.runtime.state_path.exists():
-            return OfficeState(directory=self.runtime.directory)
-        return OfficeState(**json.loads(self.runtime.state_path.read_text(encoding="utf-8")))
+            return OfficeState(directory=self.runtime.directory, session_id=self.runtime.session_id)
+        data = json.loads(self.runtime.state_path.read_text(encoding="utf-8"))
+        data.setdefault("session_id", self.runtime.session_id)
+        return OfficeState(**data)
 
     def save_state(self, state: OfficeState) -> None:
         self.runtime.state_path.write_text(json.dumps(asdict(state), indent=2) + "\n", encoding="utf-8")
@@ -483,6 +486,7 @@ class OfficeOrchestrator:
     def paths_payload(self) -> dict[str, str]:
         return {
             "directory": self.runtime.directory,
+            "session_id": self.runtime.session_id or "",
             "runtime_dir": str(self.runtime.root),
             "socket": str(self.runtime.socket_path),
             "state_file": str(self.runtime.state_path),

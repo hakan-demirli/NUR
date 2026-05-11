@@ -262,6 +262,25 @@ class OfficeController:
             target_pid = state.opencode_pid
         return self._kill_family(target_pid)
 
+    def _disable_and_abort_judge(self) -> list[str]:
+        state = self.orchestrator.load_state()
+        aborted: list[str] = []
+        state.enabled = False
+        self.orchestrator.save_state(state)
+        if state.judge_session_id:
+            try:
+                self.client.abort_session(state.judge_session_id)
+                aborted.append(state.judge_session_id)
+            except Exception as exc:
+                log_kv(
+                    get_logger("office.daemon"),
+                    _stdlib_logging.WARNING,
+                    "failed to abort judge session during shutdown",
+                    judge=state.judge_session_id,
+                    error=str(exc),
+                )
+        return aborted
+
     def shutdown(self, *, hard: bool = False) -> dict[str, Any]:
         with self._shutdown_lock:
             if self._shutdown_done:
@@ -269,10 +288,12 @@ class OfficeController:
             self._shutdown_done = True
 
         self.stop_event.set()
+        aborted = self._disable_and_abort_judge()
         killed = self._kill_serve_process()
         self.orchestrator.event(
             "daemon_stop",
             hard=hard,
+            aborted_sessions=aborted,
             killed_pids=killed,
             serve_pid=self.spawned_serve_pid,
         )
@@ -287,7 +308,7 @@ class OfficeController:
                 pass
         self.runtime.pid_path.unlink(missing_ok=True)
         self.runtime.socket_path.unlink(missing_ok=True)
-        return {"killed": killed, "serve_pid": self.spawned_serve_pid}
+        return {"aborted_sessions": aborted, "killed": killed, "serve_pid": self.spawned_serve_pid}
 
     def _watch_loop(self) -> None:
         log = get_logger("office.daemon.watch")
@@ -505,6 +526,7 @@ class OfficeHTTPServer(ThreadedUnixServer):
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="office-daemon")
     p.add_argument("--directory", required=True)
+    p.add_argument("--session-id")
     p.add_argument("--socket-path", required=True)
     p.add_argument("--base-url")
     p.add_argument("--password")
@@ -514,7 +536,7 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
-    runtime = project_runtime(args.directory)
+    runtime = project_runtime(args.directory, session_id=args.session_id)
     init_logger(runtime)
     log = get_logger("office.daemon")
     log_kv(
@@ -522,6 +544,7 @@ def main(argv: list[str] | None = None) -> int:
         _stdlib_logging.INFO,
         "daemon starting",
         directory=args.directory,
+        session=args.session_id,
         socket=args.socket_path,
         pid=os.getpid(),
     )
