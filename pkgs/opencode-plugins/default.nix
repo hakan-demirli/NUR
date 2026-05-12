@@ -3,11 +3,8 @@
   stdenvNoCC,
   bubblewrap,
   claude-code,
+  esbuild,
   fetchFromGitHub,
-  fetchPnpmDeps,
-  nodejs,
-  pnpmConfigHook,
-  pnpm_10,
   python3Packages,
 }:
 
@@ -25,21 +22,16 @@ let
 
     patches = [ ./plugins/claude-auth/patches/extra-homes.patch ];
 
-    pnpmDeps = fetchPnpmDeps {
-      inherit (finalAttrs) pname version src;
-      fetcherVersion = 2;
-      hash = "sha256-iRR8J3eX9qqVcKEKCFRX5ghvw3JxoalMO4V1G/GUGX4=";
-    };
-
-    nativeBuildInputs = [
-      nodejs
-      pnpmConfigHook
-      pnpm_10
-    ];
+    nativeBuildInputs = [ esbuild ];
 
     buildPhase = ''
       runHook preBuild
-      pnpm run build
+      esbuild src/index.ts \
+        --bundle \
+        --format=esm \
+        --platform=node \
+        --target=node22 \
+        --outfile=opencode-claude-auth.js
       runHook postBuild
     '';
 
@@ -47,7 +39,6 @@ let
       runHook preInstall
 
       mkdir -p "$out"
-      cp -R dist "$out/dist"
       cp opencode-claude-auth.js "$out/opencode-claude-auth.js"
       cp LICENSE "$out/LICENSE"
       cp README.md "$out/README.md"
@@ -101,7 +92,7 @@ stdenvNoCC.mkDerivation {
     substituteInPlace "$out/plugins/office/tui.ts" \
       --replace-fail "__OPENCODE_OFFICE_BIN__" "${opencode-office}/bin/opencode-office"
     cp -R "${opencode-claude-auth}" "$out/plugins/opencode-claude-auth-multi"
-    substituteInPlace "$out/plugins/opencode-claude-auth-multi/dist/credentials.js" \
+    substituteInPlace "$out/plugins/opencode-claude-auth-multi/opencode-claude-auth.js" \
       --replace-fail 'process.env.OPENCODE_CLAUDE_AUTH_REFRESH_WRAPPER ?? "claude"' \
       'process.env.OPENCODE_CLAUDE_AUTH_REFRESH_WRAPPER ?? "'"$out"'/bin/claude2"'
 
