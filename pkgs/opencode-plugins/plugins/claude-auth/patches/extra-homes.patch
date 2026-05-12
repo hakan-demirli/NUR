@@ -10,7 +10,7 @@ index 31f8305..5977fac 100644
    readAllClaudeAccounts,
    refreshAccount,
    writeBackCredentials,
-@@ -242,23 +243,37 @@ export function refreshViaOAuth(
+@@ -242,23 +243,38 @@ export function refreshViaOAuth(
    }
  }
  
@@ -18,7 +18,8 @@ index 31f8305..5977fac 100644
 +function refreshViaCli(account?: ClaudeAccount): void {
    const maxAttempts = 2
 +  const accountHome = account ? getHomeForAccountSource(account.source) : null
-+  const refreshWrapper = process.env.OPENCODE_CLAUDE_AUTH_REFRESH_WRAPPER ?? "claude"
++  const isExtraHome = account?.source.startsWith("home:") === true
++  const refreshWrapper = process.env.OPENCODE_CLAUDE_AUTH_REFRESH_WRAPPER ?? (isExtraHome ? process.env.OPENCODE_CLAUDE_AUTH_EXTRA_HOME_REFRESH_WRAPPER ?? "__OPENCODE_CLAUDE_AUTH_CLAUDE2__" : "__OPENCODE_CLAUDE_AUTH_CLAUDE__")
    for (let i = 0; i < maxAttempts; i++) {
 -    log("refresh_started", { source: "cli", attempt: i + 1 })
 +    log("refresh_started", {
@@ -30,14 +31,14 @@ index 31f8305..5977fac 100644
 +    })
      try {
 -      execSync("claude -p . --model haiku", {
-+      execFileSync(refreshWrapper, ["-p", ".", "--model", "haiku"], {
++      execFileSync(refreshWrapper, ["-p", "hi"], {
          timeout: 60_000,
          encoding: "utf-8",
 -        env: { ...process.env, TERM: "dumb" },
 +        env: {
 +          ...process.env,
 +          OPENCODE_CLAUDE_AUTH_ACCOUNT_SOURCE: account?.source ?? "",
-+          ...(accountHome ? { OPENCODE_CLAUDE_AUTH_ACCOUNT_HOME: accountHome } : {}),
++          ...(isExtraHome && accountHome ? { OPENCODE_CLAUDE_AUTH_ACCOUNT_HOME: accountHome } : {}),
 +          TERM: "dumb",
 +        },
          stdio: "ignore",

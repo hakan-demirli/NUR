@@ -93,8 +93,10 @@ stdenvNoCC.mkDerivation {
       --replace-fail "__OPENCODE_OFFICE_BIN__" "${opencode-office}/bin/opencode-office"
     cp -R "${opencode-claude-auth}" "$out/plugins/opencode-claude-auth-multi"
     substituteInPlace "$out/plugins/opencode-claude-auth-multi/opencode-claude-auth.js" \
-      --replace-fail 'process.env.OPENCODE_CLAUDE_AUTH_REFRESH_WRAPPER ?? "claude"' \
-      'process.env.OPENCODE_CLAUDE_AUTH_REFRESH_WRAPPER ?? "'"$out"'/bin/claude2"'
+      --replace-fail "__OPENCODE_CLAUDE_AUTH_CLAUDE__" \
+      "${claude-code}/bin/claude" \
+      --replace-fail "__OPENCODE_CLAUDE_AUTH_CLAUDE2__" \
+      "$out/bin/claude2"
 
     runHook postInstall
   '';
