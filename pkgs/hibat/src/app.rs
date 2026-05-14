@@ -612,7 +612,7 @@ impl HibatApp {
 }
 
 impl eframe::App for HibatApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self.last_refresh.elapsed() > self.refresh_interval {
             self.needs_reload = true;
         }
@@ -625,9 +625,9 @@ impl eframe::App for HibatApp {
         visuals.window_fill = self.colors.background;
         visuals.widgets.noninteractive.bg_stroke = Stroke::new(0.0, Color32::TRANSPARENT);
         visuals.override_text_color = Some(self.colors.text);
-        ui.ctx().set_visuals(visuals);
+        ctx.set_visuals(visuals);
 
-        let mut style = (*ui.ctx().global_style()).clone();
+        let mut style = (*ctx.style()).clone();
         style
             .text_styles
             .insert(egui::TextStyle::Body, egui::FontId::proportional(15.0));
@@ -643,12 +643,12 @@ impl eframe::App for HibatApp {
         style
             .text_styles
             .insert(egui::TextStyle::Monospace, egui::FontId::monospace(14.0));
-        ui.ctx().set_global_style(style);
+        ctx.set_style(style);
 
-        egui::Panel::left("sidebar")
+        egui::SidePanel::left("sidebar")
             .resizable(true)
-            .default_size(220.0)
-            .show_inside(ui, |ui| {
+            .default_width(220.0)
+            .show(ctx, |ui| {
                 egui::Frame::new()
                     .inner_margin(Margin::same(10))
                     .show(ui, |ui| {
@@ -660,7 +660,7 @@ impl eframe::App for HibatApp {
                     });
             });
 
-        egui::CentralPanel::default_margins().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ctx, |ui| {
             egui::Frame::new()
                 .inner_margin(Margin {
                     left: 12,
@@ -673,8 +673,7 @@ impl eframe::App for HibatApp {
                 });
         });
 
-        ui.ctx()
-            .request_repaint_after(std::time::Duration::from_secs(2));
+        ctx.request_repaint_after(std::time::Duration::from_secs(2));
     }
 }
 
