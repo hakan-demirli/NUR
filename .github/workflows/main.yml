@@ -15,21 +15,44 @@ jobs:
       - name: Run Flake Check
         run: nix flake check --all-systems
 
-  build-packages:
-    needs: [flake-check]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - system: x86_64-linux
-            runner: ubuntu-latest
-          - system: aarch64-linux
-            runner: ubuntu-22.04-arm
-
-    runs-on: ${{ matrix.runner }}
-
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix-x86_64: ${{ steps.set-matrix.outputs.matrix-x86_64 }}
+      matrix-aarch64: ${{ steps.set-matrix.outputs.matrix-aarch64 }}
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
-      - name: Build packages for ${{ matrix.system }}
-        run: nix build .#packages.${{ matrix.system }}.default
+      - name: Generate Matrix
+        id: set-matrix
+        run: |
+          X86=$(nix eval --json --impure --expr 'let flake = builtins.getFlake (toString ./.); pkgs = flake.packages.x86_64-linux; in builtins.filter (n: n != "default") (builtins.attrNames pkgs)')
+          AARCH=$(nix eval --json --impure --expr 'let flake = builtins.getFlake (toString ./.); pkgs = flake.packages.aarch64-linux; in builtins.filter (n: n != "default") (builtins.attrNames pkgs)')
+          echo "matrix-x86_64=$X86" >> "$GITHUB_OUTPUT"
+          echo "matrix-aarch64=$AARCH" >> "$GITHUB_OUTPUT"
+
+  build-x86_64:
+    needs: [flake-check, generate-matrix]
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJson(needs.generate-matrix.outputs.matrix-x86_64) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: Build ${{ matrix.package }} (x86_64-linux)
+        run: nix build ".#packages.x86_64-linux.${{ matrix.package }}" -L
+
+  build-aarch64:
+    needs: [flake-check, generate-matrix]
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJson(needs.generate-matrix.outputs.matrix-aarch64) }}
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: Build ${{ matrix.package }} (aarch64-linux)
+        run: nix build ".#packages.aarch64-linux.${{ matrix.package }}" -L
