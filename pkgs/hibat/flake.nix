@@ -49,8 +49,6 @@
         }
         // import ./nix/checks.nix { inherit pkgs; };
 
-        formatter = import ./nix/formatters.nix { inherit pkgs; };
-
         devShells.default = pkgs.mkShell {
           RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
           RUSTC_WRAPPER = "${pkgs.sccache}/bin/sccache";

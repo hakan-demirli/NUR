@@ -271,11 +271,19 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s, transform 0.15s;
+  transition:
+    background 0.15s,
+    transform 0.15s;
   z-index: 100;
 }
-.edit-btn:hover { background: var(--comment); transform: scale(1.05); }
-.edit-btn.active { background: var(--orange); color: var(--bg); }
+.edit-btn:hover {
+  background: var(--comment);
+  transform: scale(1.05);
+}
+.edit-btn.active {
+  background: var(--orange);
+  color: var(--bg);
+}
 
 .shortcut .delete-btn {
   position: absolute;
@@ -294,6 +302,12 @@ body {
   align-items: center;
   justify-content: center;
 }
-body.edit-mode .shortcut .delete-btn { display: flex; }
-body.edit-mode .shortcut { cursor: default; }
-body.edit-mode .shortcut:hover { transform: none; }
+body.edit-mode .shortcut .delete-btn {
+  display: flex;
+}
+body.edit-mode .shortcut {
+  cursor: default;
+}
+body.edit-mode .shortcut:hover {
+  transform: none;
+}

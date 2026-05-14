@@ -13,10 +13,7 @@ pkgs.rustPlatform.buildRustPackage {
         root = toString ./.;
         rel = pkgs.lib.removePrefix (root + "/") p;
       in
-      p == root
-      || rel == "Cargo.toml"
-      || rel == "Cargo.lock"
-      || pkgs.lib.hasPrefix "src" rel;
+      p == root || rel == "Cargo.toml" || rel == "Cargo.lock" || pkgs.lib.hasPrefix "src" rel;
   };
   doCheck = false;
 

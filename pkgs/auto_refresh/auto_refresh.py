@@ -45,7 +45,11 @@ def detect_edp_monitor() -> dict:
             text=True,
         )
         monitors = json.loads(result.stdout)
-    except (subprocess.CalledProcessError, FileNotFoundError, json.JSONDecodeError) as e:
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        json.JSONDecodeError,
+    ) as e:
         logging.error(f"Failed to query hyprctl monitors: {e}")
         return {}
 
@@ -86,7 +90,9 @@ def detect_edp_monitor() -> dict:
                         f"Neither '{desc}' nor '{name}' found in {CONFIG_FILE_PATH}."
                     )
             except FileNotFoundError:
-                logging.warning(f"Config file not found at {CONFIG_FILE_PATH}, using '{name}'.")
+                logging.warning(
+                    f"Config file not found at {CONFIG_FILE_PATH}, using '{name}'."
+                )
 
             return {
                 "target_monitor": target,
@@ -157,7 +163,9 @@ def ensure_writable_config(path: str):
     fd, tmp_path = tempfile.mkstemp(dir=config_dir, prefix=".monitors_", suffix=".conf")
     try:
         os.write(fd, content.encode())
-        os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)  # 0o644
+        os.fchmod(
+            fd, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH
+        )  # 0o644
         os.close(fd)
 
         if os.path.islink(path):

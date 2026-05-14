@@ -1,9 +1,9 @@
 // use std::collections::HashMap;
+use reqwest::Client as HttpClient;
+use serde_json::json;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{async_trait, Client, LanguageServer, LspService, Server};
-use reqwest::Client as HttpClient;
-use serde_json::json;
 
 #[derive(Debug)]
 struct Backend {
@@ -20,7 +20,11 @@ impl LanguageServer for Backend {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Options(
                     TextDocumentSyncOptions {
-                        save: Some(tower_lsp::lsp_types::TextDocumentSyncSaveOptions::SaveOptions(SaveOptions::default())),
+                        save: Some(
+                            tower_lsp::lsp_types::TextDocumentSyncSaveOptions::SaveOptions(
+                                SaveOptions::default(),
+                            ),
+                        ),
                         ..Default::default()
                     },
                 )),
@@ -65,7 +69,9 @@ impl LanguageServer for Backend {
                 .await;
 
             // Make the POST request
-            match self.http.post("http://127.0.0.1:5000/update-path")
+            match self
+                .http
+                .post("http://127.0.0.1:5000/update-path")
                 .json(&payload)
                 .send()
                 .await

@@ -179,8 +179,14 @@ function render() {
   servicesEl.innerHTML = "";
   addressesEl.innerHTML = "";
 
-  document.getElementById("services-section").style.display = data.services.length ? "block" : "none";
-  document.getElementById("addresses-section").style.display = data.addresses.length ? "block" : "none";
+  document.getElementById("services-section").style.display = data.services
+    .length
+    ? "block"
+    : "none";
+  document.getElementById("addresses-section").style.display = data.addresses
+    .length
+    ? "block"
+    : "none";
 
   data.services.forEach((s, i) =>
     servicesEl.appendChild(createShortcutEl(s, i, "services", true)),

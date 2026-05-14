@@ -34,7 +34,6 @@
             pkgs.rustfmt
           ];
         };
-        formatter = import ./nix/formatters.nix { inherit pkgs; };
         checks = import ./nix/checks.nix { inherit pkgs; };
       }
     );

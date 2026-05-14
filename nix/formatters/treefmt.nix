@@ -11,10 +11,12 @@ pkgs.treefmt.withConfig {
   runtimeInputs = with pkgs; [
     deadnix
     nixfmt-rfc-style
+    nodePackages.prettier
     ruff
     rustfmt
     shfmt
     statix
+    taplo
   ];
 
   settings = {
@@ -96,6 +98,29 @@ pkgs.treefmt.withConfig {
           "2021"
         ];
         includes = [ "*.rs" ];
+      };
+
+      prettier = {
+        command = "prettier";
+        options = [ "--write" ];
+        includes = [
+          "*.css"
+          "*.html"
+          "*.js"
+          "*.json"
+          "*.jsonc"
+          "*.md"
+          "*.ts"
+          "*.tsx"
+          "*.yaml"
+          "*.yml"
+        ];
+      };
+
+      taplo = {
+        command = "taplo";
+        options = [ "format" ];
+        includes = [ "*.toml" ];
       };
     };
   };

@@ -309,11 +309,9 @@ fn test_udiff_concise_operations() {
     );
 
     assert!(file_create_dest.exists());
-    assert!(
-        fs::read_to_string(file_create_dest)
-            .unwrap()
-            .contains("fresh content")
-    );
+    assert!(fs::read_to_string(file_create_dest)
+        .unwrap()
+        .contains("fresh content"));
 }
 
 #[test]

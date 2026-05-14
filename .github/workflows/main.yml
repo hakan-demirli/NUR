@@ -2,9 +2,9 @@ name: "Nix Build and Test"
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   flake-check:
@@ -15,18 +15,8 @@ jobs:
       - name: Run Flake Check
         run: nix flake check --all-systems
 
-  lint-and-format:
-    runs-on: ubuntu-latest
-    needs: [flake-check]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@main
-
-      - name: Run lint and format checks
-        run: bash .github/workflows/lint-and-format-check.sh
-
   build-packages:
-    needs: [lint-and-format]
+    needs: [flake-check]
     strategy:
       fail-fast: false
       matrix:

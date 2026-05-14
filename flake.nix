@@ -13,8 +13,9 @@
       ...
     }:
     let
-      lib = nixpkgs.lib;
-      findPackageDirs = fpath: lib.filterAttrs (name: type: type == "directory") (builtins.readDir fpath);
+      inherit (nixpkgs) lib;
+      findPackageDirs =
+        fpath: lib.filterAttrs (_name: type: type == "directory") (builtins.readDir fpath);
       allPackageNames = lib.attrNames (findPackageDirs ./pkgs);
 
       perSystem =
@@ -32,7 +33,7 @@
                 name: pkgs.callPackage (./pkgs + "/${name}/default.nix") { }
               );
 
-              validPackages = lib.filterAttrs (name: pkg: !(pkg.meta.broken or false)) allMyPackages;
+              validPackages = lib.filterAttrs (_name: pkg: !(pkg.meta.broken or false)) allMyPackages;
             in
             {
               packages = validPackages // {
@@ -42,6 +43,10 @@
                   meta.description = "Build environment containing all enabled small-apps";
                 };
               };
+
+              checks = import ./nix/checks.nix { inherit pkgs; };
+
+              formatter = import ./nix/formatters.nix { inherit pkgs; };
             }
           );
 

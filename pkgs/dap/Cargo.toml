@@ -1,8 +1,5 @@
 [workspace]
-members = [
-    "crates/dap-core",
-    "crates/dap-cli",
-]
+members = ["crates/dap-core", "crates/dap-cli"]
 resolver = "2"
 
 [workspace.dependencies]
