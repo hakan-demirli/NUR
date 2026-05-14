@@ -33,7 +33,9 @@
                 name: pkgs.callPackage (./pkgs + "/${name}/default.nix") { }
               );
 
-              validPackages = lib.filterAttrs (_name: pkg: !(pkg.meta.broken or false)) allMyPackages;
+              validPackages = lib.filterAttrs (
+                _name: pkg: !(pkg.meta.broken or false) && lib.meta.availableOn pkgs.stdenv.hostPlatform pkg
+              ) allMyPackages;
             in
             {
               packages = validPackages // {

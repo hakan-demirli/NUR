@@ -53,4 +53,6 @@ pkgs.rustPlatform.buildRustPackage {
         )
       }
   '';
+
+  meta.platforms = pkgs.lib.platforms.linux;
 }
