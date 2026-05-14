@@ -44,9 +44,10 @@
                 };
               };
 
-              checks = import ./nix/checks.nix { inherit pkgs; };
-
               formatter = import ./nix/formatters.nix { inherit pkgs; };
+            }
+            // lib.optionalAttrs (system == "x86_64-linux") {
+              checks = import ./nix/checks.nix { inherit pkgs; };
             }
           );
 
