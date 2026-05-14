@@ -89,7 +89,7 @@ stdenvNoCC.mkDerivation {
     mkdir -p "$out/plugins"
     cp -R plugins/office/opencode "$out/plugins/office"
     cp plugins/claude-auth/opencode/opencode-claude-auth-multi.js "$out/plugins/opencode-claude-auth-multi.js"
-    substituteInPlace "$out/plugins/office/tui.ts" \
+    substituteInPlace "$out/plugins/office/tui.tsx" \
       --replace-fail "__OPENCODE_OFFICE_BIN__" "${opencode-office}/bin/opencode-office"
     cp -R "${opencode-claude-auth}" "$out/plugins/opencode-claude-auth-multi"
     substituteInPlace "$out/plugins/opencode-claude-auth-multi/opencode-claude-auth.js" \

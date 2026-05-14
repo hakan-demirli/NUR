@@ -35,6 +35,7 @@ handlers are thread-safe by default.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -45,8 +46,7 @@ from logging.handlers import WatchedFileHandler
 from pathlib import Path
 from typing import Any
 
-from .runtime import ProjectRuntime
-
+from .runtime import GlobalRuntime, ProjectRuntime
 
 _LEVEL_NAMES = {
     "TRACE": logging.DEBUG,  # python stdlib has no TRACE; map to DEBUG.
@@ -79,11 +79,6 @@ def _resolve_int_env(name: str, default: int) -> int:
 
 
 class _OfficeFormatter(logging.Formatter):
-    """Repx-style human-readable formatter.
-
-    ``[2026-05-08 18:22:31] [INFO ] orchestrator.py:123 message k=v``
-    """
-
     def __init__(self) -> None:
         super().__init__()
 
@@ -92,7 +87,6 @@ class _OfficeFormatter(logging.Formatter):
         level = record.levelname
         if level == "WARNING":
             level = "WARN"
-        # ``record.filename`` is just the basename; that's what we want.
         location = f"{record.filename}:{record.lineno}"
         msg = record.getMessage()
 
@@ -109,12 +103,6 @@ class _OfficeFormatter(logging.Formatter):
 
 
 def _format_value(value: Any) -> str:
-    """Render a single field value for the ``key=value`` tail.
-
-    Strings get quoted only if they contain whitespace or ``=``; this
-    keeps simple ids readable (``worker=ses_abc``) while preserving
-    safety for messy values (``reason="worker idle"``).
-    """
     if value is None:
         return "null"
     if isinstance(value, bool):
@@ -134,27 +122,26 @@ _TIMESTAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})_(\d+)\.log$"
 
 
 def _rotate(log_dir: Path, max_files: int, max_age_days: int) -> None:
-    """Apply max-file and max-age retention. Quiet on errors."""
     if not log_dir.exists():
         return
     try:
         entries = sorted(
-            (p for p in log_dir.iterdir() if p.is_file() and _TIMESTAMP_RE.match(p.name)),
+            (
+                p
+                for p in log_dir.iterdir()
+                if p.is_file() and _TIMESTAMP_RE.match(p.name)
+            ),
             key=lambda p: p.name,
         )
     except OSError:
         return
 
-    # Max-files retention: drop oldest first.
     if max_files > 0 and len(entries) > max_files:
         for victim in entries[: len(entries) - max_files]:
-            try:
+            with contextlib.suppress(OSError):
                 victim.unlink()
-            except OSError:
-                pass
         entries = entries[len(entries) - max_files :]
 
-    # Max-age retention.
     if max_age_days > 0:
         cutoff = datetime.now() - timedelta(days=max_age_days)
         for entry in list(entries):
@@ -166,19 +153,11 @@ def _rotate(log_dir: Path, max_files: int, max_age_days: int) -> None:
             except ValueError:
                 continue
             if ts < cutoff:
-                try:
+                with contextlib.suppress(OSError):
                     entry.unlink()
-                except OSError:
-                    pass
 
 
-def init_logger(runtime: ProjectRuntime) -> Path:
-    """Initialize the diagnostic logger for ``runtime``.
-
-    Idempotent: subsequent calls are no-ops (and return the active log
-    path), so importers and the daemon main can both safely call it.
-    Returns the path of the active log file.
-    """
+def init_logger(runtime: ProjectRuntime | GlobalRuntime) -> Path:
     global _initialized, _active_log_path
     if _initialized and _active_log_path is not None:
         return _active_log_path
@@ -199,7 +178,6 @@ def init_logger(runtime: ProjectRuntime) -> Path:
     file_handler.setFormatter(formatter)
 
     root = logging.getLogger("office")
-    # Reset in case of double-init from tests.
     for handler in list(root.handlers):
         root.removeHandler(handler)
     root.setLevel(_resolve_level())
@@ -211,20 +189,12 @@ def init_logger(runtime: ProjectRuntime) -> Path:
         stderr_handler.setFormatter(formatter)
         root.addHandler(stderr_handler)
 
-    # Stable symlink so ``tail -F <runtime.root>/diagnostic.log`` always
-    # follows the live daemon. Use a relative target so the symlink
-    # survives directory moves.
     symlink = runtime.root / "diagnostic.log"
-    try:
+    with contextlib.suppress(OSError):
         if symlink.is_symlink() or symlink.exists():
             symlink.unlink()
-    except OSError:
-        pass
-    try:
+    with contextlib.suppress(OSError):
         symlink.symlink_to(Path("diagnostic") / log_path.name)
-    except OSError:
-        # Non-fatal; the file itself still exists at log_path.
-        pass
 
     _active_log_path = log_path
     _initialized = True
@@ -244,11 +214,6 @@ def init_logger(runtime: ProjectRuntime) -> Path:
 
 
 def get_logger(name: str = "office") -> logging.Logger:
-    """Return a child of the office logger.
-
-    Use ``get_logger("office.orchestrator")``, ``get_logger("office.client")``,
-    etc. so log lines remain attributable to a component.
-    """
     if name == "office" or name.startswith("office."):
         return logging.getLogger(name)
     return logging.getLogger(f"office.{name}")
@@ -264,5 +229,4 @@ def log_kv(logger: logging.Logger, level: int, msg: str, **fields: Any) -> None:
 
 
 def active_log_path() -> Path | None:
-    """Return the path of the active diagnostic log file, if initialized."""
     return _active_log_path

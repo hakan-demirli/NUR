@@ -1,18 +1,3 @@
-"""Prompt builders for the office orchestrator.
-
-Pure functions only. No I/O, no logging, no `self`. The orchestrator
-gathers facts (session ids, summaries, compaction decisions) and hands
-them to a builder; the builder returns a string. This keeps prompt
-wording in one obvious place so it can be tuned without touching the
-state machine.
-
-Conventions:
-- One ``@dataclass(frozen=True, slots=True)`` per prompt whose input set
-  is non-trivial. Trivial prompts can take plain kwargs.
-- Builders return ``str``. They never mutate inputs.
-- No template engine. Just f-strings and ``"\\n".join`` against a list.
-"""
-
 from __future__ import annotations
 
 import json
@@ -35,37 +20,39 @@ def build_judge_bootstrap(ctx: JudgeBootstrapContext) -> str:
             f"You are session {ctx.judge_session_id}.",
             "The office daemon is the bridge between you, the worker, and the human. Do not invent ad hoc control paths.",
             "",
-            "Daemon control plane:",
+            "Daemon control plane (a single global daemon serves every project):",
             f"  Unix socket: {sock}",
             "  Protocol:    plain HTTP/JSON over the Unix socket",
             "",
+            "Every endpoint that touches a slot takes BOTH:",
+            "  - `directory`: the absolute project path",
+            f"  - `worker_session_id`: the worker session ({ctx.worker_session_id})",
             "Use ordinary `curl --unix-socket` calls. Do not use any Python wrapper.",
             "",
             "Read endpoints:",
             f"  curl -s --unix-socket {sock} http://localhost/health",
-            f"  curl -s --unix-socket {sock} http://localhost/status",
-            f"  curl -s --unix-socket {sock} http://localhost/paths",
-            f"  curl -s --unix-socket {sock} 'http://localhost/worker/messages?limit=5'",
-            f"  curl -s --unix-socket {sock} 'http://localhost/judge/messages?limit=5'",
+            f"  curl -s --unix-socket {sock} 'http://localhost/status?directory=<DIR>&worker_session_id={ctx.worker_session_id}'",
+            f"  curl -s --unix-socket {sock} 'http://localhost/summary?directory=<DIR>&worker_session_id={ctx.worker_session_id}'",
+            f"  curl -s --unix-socket {sock} 'http://localhost/worker/messages?directory=<DIR>&worker_session_id={ctx.worker_session_id}&limit=5'",
+            f"  curl -s --unix-socket {sock} 'http://localhost/judge/messages?directory=<DIR>&worker_session_id={ctx.worker_session_id}&limit=5'",
             f"  curl -s --unix-socket {sock} 'http://localhost/logs?lines=200'",
             "",
-            "Write endpoints (all POST, JSON body):",
+            "Write endpoints (POST, JSON body always includes directory + worker_session_id):",
             f"  curl -s --unix-socket {sock} -X POST http://localhost/worker/prompt \\\n"
             "    -H 'Content-Type: application/json' \\\n"
-            "    -d '{\"message\":\"<your concrete instruction>\"}'",
-            f"  curl -s --unix-socket {sock} -X POST http://localhost/worker/prompt \\\n"
-            "    -H 'Content-Type: application/json' \\\n"
-            "    -d '{\"message\":\"<your concrete instruction>\",\"compact_first\":true}'",
+            f'    -d \'{{"directory":"<DIR>","worker_session_id":"{ctx.worker_session_id}","message":"<concrete instruction>"}}\'',
             f"  curl -s --unix-socket {sock} -X POST http://localhost/worker/compact \\\n"
-            "    -H 'Content-Type: application/json' -d '{}'",
+            "    -H 'Content-Type: application/json' \\\n"
+            f'    -d \'{{"directory":"<DIR>","worker_session_id":"{ctx.worker_session_id}"}}\'',
             f"  curl -s --unix-socket {sock} -X POST http://localhost/judge/compact \\\n"
-            "    -H 'Content-Type: application/json' -d '{}'",
+            "    -H 'Content-Type: application/json' \\\n"
+            f'    -d \'{{"directory":"<DIR>","worker_session_id":"{ctx.worker_session_id}"}}\'',
             "",
             "Acceptance policy:",
             "- Reject scaffolding, placeholders, TODOs, vague next-step language, and unverified claims.",
             "- Require concrete repo evidence and command-output evidence before accepting completion.",
             "- If tests, fuzzing, coverage, or diff-testing were requested, acceptance requires evidence they were actually executed, unless a precise external blocker is proven from the repo.",
-            "- If the worker is bloated, compact it before reprompting. If you are bloated, run `/compact` on yourself.",
+            "- If the worker is bloated, compact it before reprompting. If you are bloated, call /judge/compact via the daemon.",
             "- Do not ask the human for permission to keep the worker going; just call /worker/prompt.",
         ]
     )
@@ -101,8 +88,8 @@ def build_judge_nudge(ctx: JudgeNudgeContext) -> str:
         "To reprompt the worker, run:",
         f"  curl -s --unix-socket {sock} -X POST http://localhost/worker/prompt \\\n"
         "    -H 'Content-Type: application/json' \\\n"
-        "    -d '{\"message\":\"<concrete next instruction>\"}'",
-        "If you need to compact first, add \"compact_first\":true to the body.",
+        f'    -d \'{{"directory":"<DIR>","worker_session_id":"{ctx.worker_session_id}","message":"<concrete next instruction>"}}\'',
+        'If you need to compact first, add "compact_first":true to the body.',
     ]
     if ctx.worker_compact_recommended and ctx.worker_compact_reason:
         lines.append(

@@ -29,7 +29,13 @@ class SessionTokens:
 
     @property
     def total(self) -> int:
-        return self.input + self.output + self.reasoning + self.cache_read + self.cache_write
+        return (
+            self.input
+            + self.output
+            + self.reasoning
+            + self.cache_read
+            + self.cache_write
+        )
 
 
 class OpenCodeClient:
@@ -45,19 +51,33 @@ class OpenCodeClient:
         self.base_url = base_url.rstrip("/")
         self.directory = directory
         self.password = password or os.environ.get("OPENCODE_SERVER_PASSWORD")
-        self.username = username or os.environ.get("OPENCODE_SERVER_USERNAME") or "opencode"
+        self.username = (
+            username or os.environ.get("OPENCODE_SERVER_USERNAME") or "opencode"
+        )
         self.timeout = timeout
 
-    def _headers(self, extra: dict[str, str] | None = None, *, directory: str | None = None) -> dict[str, str]:
+    def _headers(
+        self, extra: dict[str, str] | None = None, *, directory: str | None = None
+    ) -> dict[str, str]:
         headers = {
             "x-opencode-directory": directory or self.directory,
         }
         if self.password:
-            token = base64.b64encode(f"{self.username}:{self.password}".encode("utf-8")).decode("ascii")
+            token = base64.b64encode(
+                f"{self.username}:{self.password}".encode()
+            ).decode("ascii")
             headers["Authorization"] = f"Basic {token}"
         if extra:
             headers.update(extra)
         return headers
+
+    class _Transient(Exception):
+        def __init__(self, original: Exception):
+            super().__init__(str(original))
+            self.original = original
+
+    _MAX_ATTEMPTS = 3
+    _BACKOFF_BASE_MS = 200
 
     def _request(
         self,
@@ -67,18 +87,63 @@ class OpenCodeClient:
         query: dict[str, Any] | None = None,
         body: Any | None = None,
         directory_override: str | None = None,
+        timeout: float | None = None,
     ) -> Any:
-        # Some endpoints (notably session writes) are workspace-scoped and
-        # require the request's directory to match the session's directory.
-        # Allow callers to pass a per-request override for both the header
-        # and the `directory` query parameter the workspace-routing
-        # middleware uses.
+        last_exc: Exception | None = None
+        for attempt in range(1, self._MAX_ATTEMPTS + 1):
+            try:
+                return self._request_once(
+                    method,
+                    path,
+                    query=query,
+                    body=body,
+                    directory_override=directory_override,
+                    timeout=timeout,
+                    attempt=attempt,
+                )
+            except OpenCodeClient._Transient as exc:
+                last_exc = exc.original
+                if attempt >= self._MAX_ATTEMPTS:
+                    break
+                import random
+
+                delay_ms = min(self._BACKOFF_BASE_MS * (3 ** (attempt - 1)), 2000)
+                jitter_ms = random.randint(0, 50)
+                log_kv(
+                    _log,
+                    logging.WARNING,
+                    "opencode http retry",
+                    method=method,
+                    path=path,
+                    attempt=attempt,
+                    delay_ms=delay_ms + jitter_ms,
+                    error=str(exc.original),
+                )
+                time.sleep((delay_ms + jitter_ms) / 1000.0)
+        assert last_exc is not None
+        raise OpenCodeError(
+            f"{method} {path} failed after {self._MAX_ATTEMPTS} attempts: {last_exc}"
+        ) from last_exc
+
+    def _request_once(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict[str, Any] | None = None,
+        body: Any | None = None,
+        directory_override: str | None = None,
+        timeout: float | None = None,
+        attempt: int = 1,
+    ) -> Any:
         url = self.base_url + path
         merged_query = dict(query or {})
         if directory_override:
             merged_query["directory"] = directory_override
         if merged_query:
-            encoded = urllib.parse.urlencode({k: v for k, v in merged_query.items() if v is not None}, doseq=True)
+            encoded = urllib.parse.urlencode(
+                {k: v for k, v in merged_query.items() if v is not None}, doseq=True
+            )
             if encoded:
                 url = f"{url}?{encoded}"
         data = None
@@ -90,7 +155,9 @@ class OpenCodeClient:
         body_bytes = len(data) if data is not None else 0
         start = time.monotonic()
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.urlopen(
+                request, timeout=timeout or self.timeout
+            ) as response:
                 payload = response.read()
                 status_code = response.status
         except urllib.error.HTTPError as exc:
@@ -106,8 +173,12 @@ class OpenCodeClient:
                 ms=elapsed_ms,
                 req_bytes=body_bytes,
                 detail=detail[:500],
+                attempt=attempt,
             )
-            raise OpenCodeError(f"HTTP {exc.code} for {method} {path}: {detail}") from exc
+            err = OpenCodeError(f"HTTP {exc.code} for {method} {path}: {detail}")
+            if exc.code >= 500 or exc.code == 429:
+                raise OpenCodeClient._Transient(err) from exc
+            raise err from exc
         except urllib.error.URLError as exc:
             elapsed_ms = int((time.monotonic() - start) * 1000)
             log_kv(
@@ -118,8 +189,10 @@ class OpenCodeClient:
                 path=path,
                 ms=elapsed_ms,
                 error=str(exc),
+                attempt=attempt,
             )
-            raise OpenCodeError(f"Request failed for {method} {path}: {exc}") from exc
+            err = OpenCodeError(f"Request failed for {method} {path}: {exc}")
+            raise OpenCodeClient._Transient(err) from exc
 
         elapsed_ms = int((time.monotonic() - start) * 1000)
         log_kv(
@@ -157,36 +230,29 @@ class OpenCodeClient:
     def get_session(self, session_id: str) -> dict[str, Any]:
         return self._request("GET", f"/session/{session_id}")
 
-    def fork_session(self, session_id: str, message_id: str | None = None) -> dict[str, Any]:
-        # Always send an explicit JSON body. The Effect HttpApi validates
-        # request payloads against ForkPayload (messageID?: MessageID); a
-        # missing body parses as undefined and the schema rejects it with a
-        # generic 400 + empty body, which is exactly what we were seeing.
+    def fork_session(
+        self, session_id: str, message_id: str | None = None
+    ) -> dict[str, Any]:
         body: dict[str, Any] = {}
         if message_id:
             body["messageID"] = message_id
-        # Sessions are workspace-scoped: the workspace-routing middleware
-        # rejects writes whose `directory` doesn't match the session's own
-        # directory. The daemon was started with the user's cwd, which is
-        # often a parent of the session's directory (e.g. cwd=/test, session
-        # in /test/templae). Resolve it from the session record so /fork
-        # always carries the right directory header + query.
-        session_dir = self.directory
-        try:
-            info = self.get_session(session_id)
-            value = info.get("directory") if isinstance(info, dict) else None
-            if isinstance(value, str) and value:
-                session_dir = value
-        except OpenCodeError:
-            # If the read fails for any reason, fall back to the daemon's
-            # cwd; the subsequent fork call will surface the real error.
-            pass
+        session_dir = self.session_directory(session_id)
         return self._request(
             "POST",
             f"/session/{session_id}/fork",
             body=body,
             directory_override=session_dir,
         )
+
+    def session_directory(self, session_id: str) -> str:
+        try:
+            info = self.get_session(session_id)
+            value = info.get("directory") if isinstance(info, dict) else None
+            if isinstance(value, str) and value:
+                return value
+        except OpenCodeError:
+            pass
+        return self.directory
 
     def abort_session(self, session_id: str) -> bool:
         return bool(self._request("POST", f"/session/{session_id}/abort"))
@@ -197,8 +263,14 @@ class OpenCodeClient:
     def session_status(self, session_id: str) -> dict[str, Any] | None:
         return self.session_status_map().get(session_id)
 
-    def list_messages(self, session_id: str, *, limit: int | None = None, before: str | None = None) -> list[dict[str, Any]]:
-        return self._request("GET", f"/session/{session_id}/message", query={"limit": limit, "before": before})
+    def list_messages(
+        self, session_id: str, *, limit: int | None = None, before: str | None = None
+    ) -> list[dict[str, Any]]:
+        return self._request(
+            "GET",
+            f"/session/{session_id}/message",
+            query={"limit": limit, "before": before},
+        )
 
     def get_message(self, session_id: str, message_id: str) -> dict[str, Any]:
         return self._request("GET", f"/session/{session_id}/message/{message_id}")
@@ -225,11 +297,41 @@ class OpenCodeClient:
             body["system"] = system
         self._request("POST", f"/session/{session_id}/prompt_async", body=body)
 
-    def send_command(self, session_id: str, command: str, arguments: str = "", *, agent: str | None = None) -> dict[str, Any]:
+    def send_command(
+        self,
+        session_id: str,
+        command: str,
+        arguments: str = "",
+        *,
+        agent: str | None = None,
+    ) -> dict[str, Any]:
         body: dict[str, Any] = {"command": command, "arguments": arguments}
         if agent:
             body["agent"] = agent
         return self._request("POST", f"/session/{session_id}/command", body=body)
+
+    def summarize(
+        self, session_id: str, *, auto: bool = False, timeout: float = 300.0
+    ) -> bool:
+        model = self.session_model(session_id)
+        if not model:
+            raise OpenCodeError(
+                f"Cannot summarize {session_id}: no model found in session messages"
+            )
+        body: dict[str, Any] = {
+            "providerID": model["providerID"],
+            "modelID": model["modelID"],
+            "auto": auto,
+        }
+        return bool(
+            self._request(
+                "POST",
+                f"/session/{session_id}/summarize",
+                body=body,
+                directory_override=self.session_directory(session_id),
+                timeout=timeout,
+            )
+        )
 
     def run_shell(
         self,
@@ -244,8 +346,12 @@ class OpenCodeClient:
             body["model"] = model
         return self._request("POST", f"/session/{session_id}/shell", body=body)
 
-    def diff(self, session_id: str, message_id: str | None = None) -> list[dict[str, Any]]:
-        return self._request("GET", f"/session/{session_id}/diff", query={"messageID": message_id})
+    def diff(
+        self, session_id: str, message_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        return self._request(
+            "GET", f"/session/{session_id}/diff", query={"messageID": message_id}
+        )
 
     def list_providers(self) -> dict[str, Any]:
         return self._request("GET", "/provider")
@@ -257,22 +363,27 @@ class OpenCodeClient:
         messages = self.last_messages(session_id, 1)
         return messages[0] if messages else None
 
-    def latest_assistant_message(self, session_id: str, *, search_limit: int = 20) -> dict[str, Any] | None:
+    def latest_assistant_message(
+        self, session_id: str, *, search_limit: int = 20
+    ) -> dict[str, Any] | None:
         for message in reversed(self.list_messages(session_id, limit=search_limit)):
             if message.get("info", {}).get("role") == "assistant":
                 return message
         return None
 
     def session_model(self, session_id: str) -> dict[str, str] | None:
-        message = self.latest_assistant_message(session_id)
-        if not message:
-            return None
-        info = message["info"]
-        provider_id = info.get("providerID")
-        model_id = info.get("modelID")
-        if not provider_id or not model_id:
-            return None
-        return {"providerID": provider_id, "modelID": model_id}
+        for message in reversed(self.list_messages(session_id, limit=40)):
+            info = message.get("info") or {}
+            provider_id = info.get("providerID")
+            model_id = info.get("modelID")
+            if provider_id and model_id:
+                return {"providerID": provider_id, "modelID": model_id}
+            model = info.get("model") or {}
+            provider_id = model.get("providerID")
+            model_id = model.get("modelID")
+            if provider_id and model_id:
+                return {"providerID": provider_id, "modelID": model_id}
+        return None
 
     def latest_tokens(self, session_id: str) -> SessionTokens | None:
         message = self.latest_assistant_message(session_id)
@@ -311,7 +422,9 @@ class OpenCodeClient:
             "status": status,
             "model": model,
             "context_limit": context,
-            "tokens": None if not tokens else {
+            "tokens": None
+            if not tokens
+            else {
                 "input": tokens.input,
                 "output": tokens.output,
                 "reasoning": tokens.reasoning,

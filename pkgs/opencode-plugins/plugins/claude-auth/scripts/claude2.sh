@@ -42,7 +42,7 @@ if [[ $ACCOUNT_HOME == "$REAL_HOME" ]]; then
   exit 1
 fi
 
-CWD="$(pwd -P 2>/dev/null || pwd)"
+CWD="$(pwd -P 2> /dev/null || pwd)"
 
 mkdir -p "$ACCOUNT_HOME/.claude"
 mkdir -p "$ACCOUNT_HOME/.config"
