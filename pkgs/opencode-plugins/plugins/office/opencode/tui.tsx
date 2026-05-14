@@ -400,7 +400,7 @@ const SUBACTIONS: Subaction[] = [
       if (currentSessionID === workerSessionID) {
         return { kind: "toast", variant: "info", message: "already on worker" };
       }
-      await api.client.tui.selectSession({ sessionID: workerSessionID });
+      api.route.navigate("session", { sessionID: workerSessionID });
       return { kind: "noop" };
     },
   },
@@ -420,7 +420,7 @@ const SUBACTIONS: Subaction[] = [
       if (currentSessionID === judgeSessionID) {
         return { kind: "toast", variant: "info", message: "already on judge" };
       }
-      await api.client.tui.selectSession({ sessionID: judgeSessionID });
+      api.route.navigate("session", { sessionID: judgeSessionID });
       return { kind: "noop" };
     },
   },
