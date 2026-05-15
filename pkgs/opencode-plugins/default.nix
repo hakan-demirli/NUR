@@ -20,7 +20,10 @@ let
       hash = "sha256-q5H2p3mwHH9Uh3BWDC/AJaj1+jxGYEthm7YNfy7MEPQ=";
     };
 
-    patches = [ ./plugins/claude-auth/patches/extra-homes.patch ];
+    patches = [
+      ./plugins/claude-auth/patches/extra-homes.patch
+      ./plugins/claude-auth/patches/auto-switch.patch
+    ];
 
     nativeBuildInputs = [ esbuild ];
 

@@ -1,0 +1,518 @@
+--- a/src/credentials.ts
++++ b/src/credentials.ts
+@@ -39,6 +39,10 @@
+   return allAccounts
+ }
+ 
++export function getActiveAccountSource(): string | null {
++  return activeAccountSource
++}
++
+ export function setActiveAccountSource(source: string): void {
+   const previous = activeAccountSource
+   activeAccountSource = source
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -1,5 +1,8 @@
+ import type { Plugin } from "@opencode-ai/plugin"
+ import crypto from "node:crypto"
++import { readFileSync } from "node:fs"
++import { homedir } from "node:os"
++import { join } from "node:path"
+ import { config } from "./model-config.ts"
+ import { readAllClaudeAccounts, type ClaudeAccount } from "./keychain.ts"
+ import { initLogger, log } from "./logger.ts"
+@@ -19,6 +22,8 @@
+   syncAuthJson,
+   initAccounts,
+   setActiveAccountSource,
++  getActiveAccountSource,
++  getAccounts,
+   loadPersistedAccountSource,
+   saveAccountSource,
+   refreshAccountsList,
+@@ -217,6 +222,147 @@
+ 
+ const SYNC_INTERVAL = 5 * 60 * 1000 // 5 minutes
+ 
++// ---------- Auto-switch (team plan → max plan on cooldown) ----------
++//
++// Configuration lives at:
++//   ${XDG_CONFIG_HOME:-$HOME/.config}/opencode-plugins/claude-auth/config.json
++//
++// Schema:
++//   {
++//     "autoSwitch": {
++//       "order": ["home:~/.cache/claude-multi/work", "file"]
++//     }
++//   }
++//
++// Sources are matched against the values returned by readAllClaudeAccounts():
++// `file` for the default ~/.claude/.credentials.json, or `home:<absolute>` for
++// an extra home discovered under ~/.cache/claude-multi/ or listed in
++// OPENCODE_CLAUDE_AUTH_EXTRA_HOMES. `~` and `~/` are expanded in source paths.
++// When the config file is absent or empty, ordering falls back to the natural
++// discovery order (file first), preserving upstream behavior.
++
++interface AccountCooldown {
++  resetAt: number
++  reason: string
++}
++
++interface AutoSwitchConfig {
++  order?: unknown
++}
++
++interface PluginConfig {
++  autoSwitch?: AutoSwitchConfig
++}
++
++const accountCooldowns = new Map<string, AccountCooldown>()
++let cachedPluginConfig: PluginConfig | null = null
++let pluginConfigLoaded = false
++
++function getPluginConfigPath(): string {
++  const xdg = process.env.XDG_CONFIG_HOME
++  const base = xdg && xdg.length > 0 ? xdg : join(homedir(), ".config")
++  return join(base, "opencode-plugins", "claude-auth", "config.json")
++}
++
++function expandHome(p: string): string {
++  if (p === "~") return homedir()
++  if (p.startsWith("~/")) return join(homedir(), p.slice(2))
++  return p
++}
++
++function normalizeSource(s: string): string {
++  const trimmed = s.trim()
++  if (!trimmed) return ""
++  if (trimmed.startsWith("home:")) return "home:" + expandHome(trimmed.slice(5))
++  return trimmed
++}
++
++function loadPluginConfig(): PluginConfig {
++  if (pluginConfigLoaded && cachedPluginConfig) return cachedPluginConfig
++  const path = getPluginConfigPath()
++  let parsed: PluginConfig = {}
++  try {
++    const raw = readFileSync(path, "utf-8")
++    parsed = JSON.parse(raw) as PluginConfig
++    log("plugin_config_loaded", { path })
++  } catch (err) {
++    const code = (err as NodeJS.ErrnoException | undefined)?.code
++    if (code === "ENOENT") {
++      log("plugin_config_absent", { path })
++    } else {
++      log("plugin_config_unavailable", {
++        path,
++        reason: err instanceof Error ? err.message : String(err),
++      })
++    }
++  }
++  cachedPluginConfig = parsed ?? {}
++  pluginConfigLoaded = true
++  return cachedPluginConfig
++}
++
++function formatDuration(ms: number): string {
++  const totalSec = Math.max(0, Math.round(ms / 1000))
++  const h = Math.floor(totalSec / 3600)
++  const m = Math.floor((totalSec % 3600) / 60)
++  const s = totalSec % 60
++  if (h > 0) return `${h}h${m.toString().padStart(2, "0")}m`
++  if (m > 0) return `${m}m${s.toString().padStart(2, "0")}s`
++  return `${s}s`
++}
++
++function getAutoSwitchOrder(): string[] {
++  const cfg = loadPluginConfig()
++  const raw = cfg.autoSwitch?.order
++  if (Array.isArray(raw)) {
++    const out: string[] = []
++    for (const entry of raw) {
++      if (typeof entry !== "string") continue
++      const norm = normalizeSource(entry)
++      if (norm) out.push(norm)
++    }
++    if (out.length > 0) return out
++  }
++  return getAccounts().map((a) => a.source)
++}
++
++function pickActiveSource(): string | null {
++  const order = getAutoSwitchOrder()
++  const now = Date.now()
++  for (const src of order) {
++    const cd = accountCooldowns.get(src)
++    if (!cd || cd.resetAt <= now) {
++      if (cd) {
++        accountCooldowns.delete(src)
++        log("account_cooldown_expired", { source: src })
++      }
++      return src
++    }
++  }
++  return order[0] ?? null
++}
++
++function markAccountCooldown(
++  source: string,
++  retryAfterSec: number,
++  reason: string,
++): void {
++  const resetAt = Date.now() + retryAfterSec * 1000
++  accountCooldowns.set(source, { resetAt, reason })
++  log("account_cooldown_set", {
++    source,
++    retryAfterSec,
++    resetAt,
++    reason,
++  })
++  console.warn(
++    `opencode-claude-auth: ${source} rate-limited (${reason}); ` +
++      `cooling down for ${formatDuration(retryAfterSec * 1000)}`,
++  )
++}
++
++// --------------------------------------------------------------------
++
+ const plugin: Plugin = async () => {
+   initLogger()
+ 
+@@ -322,14 +468,6 @@
+           apiKey: "",
+           baseURL: "https://api.anthropic.com/v1",
+           async fetch(input: RequestInfo | URL, init?: RequestInit) {
+-            const latest = getCachedCredentials()
+-            if (!latest) {
+-              log("fetch_no_credentials", { modelId: "unknown" })
+-              throw new Error(
+-                "Claude Code credentials are unavailable or expired. Run `claude` to refresh them.",
+-              )
+-            }
+-
+             const requestInit = init ?? {}
+             const bodyStr =
+               typeof requestInit.body === "string"
+@@ -343,140 +481,211 @@
+               } catch {}
+             }
+ 
+-            log("fetch_credentials", {
+-              modelId,
+-              accessToken: latest.accessToken,
+-              expiresAt: latest.expiresAt,
+-            })
+-
+-            // Get excluded betas for this model (from previous failed requests)
+-            const excluded = getExcludedBetas(modelId)
+             const requestUrl = buildRequestUrl(input)
+-            const headers = buildRequestHeaders(
+-              input,
+-              requestInit,
+-              latest.accessToken,
+-              modelId,
+-              excluded,
+-            )
+             const body = transformBody(requestInit.body)
+ 
+-            const headerKeys: string[] = []
+-            headers.forEach((_, key) => headerKeys.push(key))
+-            const betas = (headers.get("anthropic-beta") ?? "")
+-              .split(",")
+-              .filter(Boolean)
+-            log("fetch_headers_built", { headerKeys, betas, modelId })
+-
+-            let response = await fetchWithRetry(requestUrl, {
+-              ...requestInit,
+-              body,
+-              headers,
+-            })
+-
+-            log("fetch_response", {
+-              status: response.status,
+-              modelId,
+-              retryAttempt: 0,
+-            })
+-
+-            // On 401, force a credential refresh and retry once.
+-            // This handles the common case of token expiry mid-session.
+-            if (response.status === 401) {
+-              log("fetch_401_retry", { modelId })
+-              const refreshed = getCachedCredentials()
+-              if (refreshed && refreshed.accessToken !== latest.accessToken) {
+-                const retryHeaders = buildRequestHeaders(
+-                  input,
+-                  requestInit,
+-                  refreshed.accessToken,
+-                  modelId,
+-                  excluded,
++            const tried = new Set<string>()
++            let lastResponse: Response | null = null
++            const maxIterations = Math.max(getAutoSwitchOrder().length, 1) + 1
++
++            for (let iter = 0; iter < maxIterations; iter++) {
++              const target = pickActiveSource()
++              if (!target || tried.has(target)) break
++              tried.add(target)
++
++              if (target !== getActiveAccountSource()) {
++                setActiveAccountSource(target)
++                log("account_auto_switch", { target, modelId })
++                console.warn(
++                  `opencode-claude-auth: routing request via ${target}`,
+                 )
+-                response = await fetchWithRetry(requestUrl, {
+-                  ...requestInit,
+-                  body,
+-                  headers: retryHeaders,
+-                })
+-                log("fetch_401_retry_result", {
+-                  status: response.status,
+-                  modelId,
+-                })
+               }
+-            }
+ 
+-            // Check for long-context beta errors and retry with betas excluded
+-            // Try up to LONG_CONTEXT_BETAS.length times, excluding one more beta each time
+-            for (
+-              let attempt = 0;
+-              attempt < LONG_CONTEXT_BETAS.length;
+-              attempt++
+-            ) {
+-              if (response.status !== 400 && response.status !== 429) {
+-                break
++              const latest = getCachedCredentials()
++              if (!latest) {
++                log("fetch_no_credentials", { modelId, source: target })
++                continue
+               }
+ 
+-              const cloned = response.clone()
+-              const responseBody = await cloned.text()
+-
+-              if (!isLongContextError(responseBody)) {
+-                break
+-              }
+-
+-              const betaToExclude = getNextBetaToExclude(modelId)
+-              if (!betaToExclude) {
+-                break // All long-context betas already excluded
+-              }
+-
+-              addExcludedBeta(modelId, betaToExclude)
+-              log("fetch_beta_excluded", {
++              log("fetch_credentials", {
+                 modelId,
+-                excludedBeta: betaToExclude,
++                source: target,
++                accessToken: latest.accessToken,
++                expiresAt: latest.expiresAt,
+               })
+ 
+-              // Rebuild headers without the excluded beta and retry
+-              const currentCreds = getCachedCredentials()
+-              const retryToken = currentCreds?.accessToken ?? latest.accessToken
+-              const newExcluded = getExcludedBetas(modelId)
+-              const newHeaders = buildRequestHeaders(
++              // Get excluded betas for this model (from previous failed requests)
++              const excluded = getExcludedBetas(modelId)
++              const headers = buildRequestHeaders(
+                 input,
+                 requestInit,
+-                retryToken,
++                latest.accessToken,
+                 modelId,
+-                newExcluded,
++                excluded,
+               )
+ 
+-              response = await fetchWithRetry(requestUrl, {
++              const headerKeys: string[] = []
++              headers.forEach((_, key) => headerKeys.push(key))
++              const betas = (headers.get("anthropic-beta") ?? "")
++                .split(",")
++                .filter(Boolean)
++              log("fetch_headers_built", { headerKeys, betas, modelId })
++
++              let response = await fetchWithRetry(requestUrl, {
+                 ...requestInit,
+                 body,
+-                headers: newHeaders,
++                headers,
++              })
++
++              log("fetch_response", {
++                status: response.status,
++                modelId,
++                source: target,
++                retryAttempt: 0,
+               })
+-            }
+ 
+-            // Log non-200 responses at warn level so they're visible in OpenCode
+-            if (!response.ok) {
+-              const status = response.status
+-              const cloned = response.clone()
+-              cloned
+-                .text()
+-                .then((errorBody) => {
+-                  let message = errorBody
+-                  try {
+-                    const parsed = JSON.parse(errorBody) as {
+-                      error?: { type?: string; message?: string }
+-                    }
+-                    message =
+-                      parsed.error?.message ?? parsed.error?.type ?? errorBody
+-                  } catch {}
+-                  log("fetch_error_response", { status, modelId, message })
+-                  console.warn(
+-                    `opencode-claude-auth: API ${status} for ${modelId}: ${message}`,
++              // On 401, force a credential refresh and retry once.
++              // This handles the common case of token expiry mid-session.
++              if (response.status === 401) {
++                log("fetch_401_retry", { modelId })
++                const refreshed = getCachedCredentials()
++                if (refreshed && refreshed.accessToken !== latest.accessToken) {
++                  const retryHeaders = buildRequestHeaders(
++                    input,
++                    requestInit,
++                    refreshed.accessToken,
++                    modelId,
++                    excluded,
+                   )
++                  response = await fetchWithRetry(requestUrl, {
++                    ...requestInit,
++                    body,
++                    headers: retryHeaders,
++                  })
++                  log("fetch_401_retry_result", {
++                    status: response.status,
++                    modelId,
++                  })
++                }
++              }
++
++              // Check for long-context beta errors and retry with betas excluded
++              // Try up to LONG_CONTEXT_BETAS.length times, excluding one more beta each time
++              for (
++                let attempt = 0;
++                attempt < LONG_CONTEXT_BETAS.length;
++                attempt++
++              ) {
++                if (response.status !== 400 && response.status !== 429) {
++                  break
++                }
++
++                const cloned = response.clone()
++                const responseBody = await cloned.text()
++
++                if (!isLongContextError(responseBody)) {
++                  break
++                }
++
++                const betaToExclude = getNextBetaToExclude(modelId)
++                if (!betaToExclude) {
++                  break // All long-context betas already excluded
++                }
++
++                addExcludedBeta(modelId, betaToExclude)
++                log("fetch_beta_excluded", {
++                  modelId,
++                  excludedBeta: betaToExclude,
+                 })
+-                .catch(() => {})
++
++                // Rebuild headers without the excluded beta and retry
++                const currentCreds = getCachedCredentials()
++                const retryToken =
++                  currentCreds?.accessToken ?? latest.accessToken
++                const newExcluded = getExcludedBetas(modelId)
++                const newHeaders = buildRequestHeaders(
++                  input,
++                  requestInit,
++                  retryToken,
++                  modelId,
++                  newExcluded,
++                )
++
++                response = await fetchWithRetry(requestUrl, {
++                  ...requestInit,
++                  body,
++                  headers: newHeaders,
++                })
++              }
++
++              // Auto-switch on long-cooldown rate limits.
++              // fetchWithRetry already handles short retries (<= max-retry-delay);
++              // anything longer signals a quota/session limit reset, at which
++              // point we cool down this source and try the next-priority one.
++              if (response.status === 429 || response.status === 529) {
++                const retryAfterHeader = response.headers.get("retry-after")
++                const retryAfterSec = retryAfterHeader
++                  ? parseInt(retryAfterHeader, 10)
++                  : NaN
++                if (
++                  !Number.isNaN(retryAfterSec) &&
++                  retryAfterSec * 1000 > getMaxRetryDelayMs()
++                ) {
++                  markAccountCooldown(
++                    target,
++                    retryAfterSec,
++                    `http ${response.status}`,
++                  )
++                  lastResponse = response
++                  continue
++                }
++              }
++
++              // Log non-200 responses at warn level so they're visible in OpenCode
++              if (!response.ok) {
++                const status = response.status
++                const cloned = response.clone()
++                cloned
++                  .text()
++                  .then((errorBody) => {
++                    let message = errorBody
++                    try {
++                      const parsed = JSON.parse(errorBody) as {
++                        error?: { type?: string; message?: string }
++                      }
++                      message =
++                        parsed.error?.message ??
++                        parsed.error?.type ??
++                        errorBody
++                    } catch {}
++                    log("fetch_error_response", {
++                      status,
++                      modelId,
++                      source: target,
++                      message,
++                    })
++                    console.warn(
++                      `opencode-claude-auth: API ${status} for ${modelId} via ${target}: ${message}`,
++                    )
++                  })
++                  .catch(() => {})
++              }
++
++              return transformResponseStream(response)
+             }
+ 
+-            return transformResponseStream(response)
++            if (lastResponse) {
++              log("fetch_all_accounts_rate_limited", { modelId })
++              console.warn(
++                `opencode-claude-auth: all Claude accounts rate-limited for ${modelId}`,
++              )
++              return transformResponseStream(lastResponse)
++            }
++
++            log("fetch_no_credentials_all_sources", { modelId })
++            throw new Error(
++              "Claude Code credentials are unavailable or expired. Run `claude` to refresh them.",
++            )
+           },
+         }
+       },
