@@ -66,5 +66,6 @@ pkgs.buildEnv {
 
   meta = {
     description = "HTML Preview tools (LSP + Server)";
+    broken = true;
   };
 }
