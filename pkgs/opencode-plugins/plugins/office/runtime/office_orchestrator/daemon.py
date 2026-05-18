@@ -116,12 +116,7 @@ class OfficeController:
                                 slot.worker_session_id,
                                 reason="worker completed an assistant turn",
                             )
-                        elif status.get("type") == "idle":
-                            self.orchestrator.nudge_judge(
-                                slot.directory,
-                                slot.worker_session_id,
-                                reason="worker idle",
-                            )
+
                     except Exception as exc:
                         slot.consecutive_failures += 1
                         dirty = True
