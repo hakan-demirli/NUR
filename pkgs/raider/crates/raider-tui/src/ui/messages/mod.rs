@@ -126,24 +126,34 @@ fn assistant_thought_items(
         .fg(theme.text_muted)
         .bg(theme.background)
         .add_modifier(Modifier::ITALIC);
+    let label_fg = mute_toward(
+        theme.markdown_emph,
+        theme.background,
+        theme.thinking_opacity,
+    );
+    let label_style = Style::default()
+        .fg(label_fg)
+        .bg(theme.background)
+        .add_modifier(Modifier::ITALIC | Modifier::BOLD);
 
     if collapsed {
         let fallback = if streaming { "Thinking" } else { "Thought" };
         let label = reasoning_title(content).unwrap_or_else(|| fallback.to_string());
-        let header = Span::styled(
-            format!("{label} (hidden — /thinking to show)"),
-            thought_style,
-        );
-        return vec![
-            ListItem::new(vec![Line::from(vec![reasoning_bar, reasoning_gap, header])])
-                .style(Style::default().bg(theme.background)),
-        ];
+        let label_span = Span::styled(label, label_style);
+        let suffix_span = Span::styled(" (hidden — /thinking to show)", thought_style);
+        return vec![ListItem::new(vec![Line::from(vec![
+            reasoning_bar,
+            reasoning_gap,
+            label_span,
+            suffix_span,
+        ])])
+        .style(Style::default().bg(theme.background))];
     }
 
-    let label = if streaming { "Thinking" } else { "Thought" };
-    let source = format!("_{label}:_ {content}");
+    let label = if streaming { "Thinking:" } else { "Thought:" };
+    let label_span = Span::styled(format!("{label} "), label_style);
     crate::ui::markdown::render_markdown_with_synth(
-        &source,
+        content,
         width,
         resources.ps,
         resources.ts,
@@ -155,12 +165,35 @@ fn assistant_thought_items(
         },
     )
     .into_iter()
-    .map(|line| {
+    .enumerate()
+    .map(|(idx, line)| {
         let mut spans = vec![reasoning_bar.clone(), reasoning_gap.clone()];
+        if idx == 0 {
+            spans.push(label_span.clone());
+        }
         spans.extend(line.spans);
         ListItem::new(vec![Line::from(spans)]).style(Style::default().bg(theme.background))
     })
     .collect()
+}
+
+fn mute_toward(fg: Color, bg: Color, alpha: f32) -> Color {
+    let alpha = alpha.clamp(0.0, 1.0);
+    let (fr, fg_, fb) = rgb_components(fg);
+    let (br, bg_, bb) = rgb_components(bg);
+    let mix = |f: u8, b: u8| -> u8 {
+        (f as f32 * alpha + b as f32 * (1.0 - alpha))
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    Color::Rgb(mix(fr, br), mix(fg_, bg_), mix(fb, bb))
+}
+
+fn rgb_components(c: Color) -> (u8, u8, u8) {
+    match c {
+        Color::Rgb(r, g, b) => (r, g, b),
+        _ => (128, 128, 128),
+    }
 }
 
 fn cached_assistant_thought_items(
