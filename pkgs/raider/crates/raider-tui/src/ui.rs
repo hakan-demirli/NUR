@@ -89,14 +89,18 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 x: rects.prompt.x,
                 y: rects.prompt.y,
                 width: rects.prompt.width,
-                height: rects.prompt.height,
+                height: rects
+                    .sub_tray
+                    .y
+                    .saturating_add(rects.sub_tray.height)
+                    .saturating_sub(rects.prompt.y),
             };
             render_subagent_footer(f, app, footer_area);
         } else {
             render_prompt(f, app, rects.prompt, &wrapped, cursor_pos);
+            render_connector(f, app, rects.connector);
+            render_sub_tray(f, app, rects.sub_tray);
         }
-        render_connector(f, app, rects.connector);
-        render_sub_tray(f, app, rects.sub_tray);
     }
     if !rects.modal_active && rects.tip_visible && rects.tip_strip_height >= 2 {
         let tip_row = Rect {

@@ -2,7 +2,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::app::App;
-use crate::ui::path::truncate_path_right;
+
 use crate::ui::primitives::bar_gap;
 
 pub(crate) fn render_subagent_footer(f: &mut Frame, app: &App, area: Rect) {
@@ -62,12 +62,12 @@ pub(crate) fn render_subagent_footer(f: &mut Frame, app: &App, area: Rect) {
         .add_modifier(Modifier::BOLD);
     let muted = Style::default().fg(theme.text_muted).bg(panel_bg);
     let right_spans: Vec<Span<'_>> = vec![
+        Span::styled("Parent ", muted),
         Span::styled("up", key_style),
-        Span::styled(" Parent  ", muted),
-        Span::styled("←", key_style),
-        Span::styled(" Prev  ", muted),
-        Span::styled("→", key_style),
-        Span::styled(" Next", muted),
+        Span::styled("  Prev ", muted),
+        Span::styled("left", key_style),
+        Span::styled("  Next ", muted),
+        Span::styled("right", key_style),
     ];
 
     let right_w: u16 = right_spans
@@ -75,22 +75,15 @@ pub(crate) fn render_subagent_footer(f: &mut Frame, app: &App, area: Rect) {
         .map(|s| s.content.chars().count() as u16)
         .sum();
 
-    let top_y = area.y + (area.height.saturating_sub(1)) / 2;
+    let top_y = area.y + area.height.saturating_sub(2);
 
     let max_left_w = inner_w.saturating_sub(right_w + 2);
     if max_left_w > 0 {
-        let left_str: String = left_spans.iter().map(|s| s.content.to_string()).collect();
-        let trimmed = truncate_path_right(&left_str, max_left_w as usize);
-        let lrect = Rect::new(inner_x, top_y, trimmed.chars().count() as u16, 1);
+        let left_total_w: usize = left_spans.iter().map(|s| s.content.chars().count()).sum();
+        let left_w = left_total_w.min(max_left_w as usize);
+        let lrect = Rect::new(inner_x, top_y, left_w as u16, 1);
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                trimmed,
-                Style::default()
-                    .fg(theme.text)
-                    .bg(panel_bg)
-                    .add_modifier(Modifier::BOLD),
-            )))
-            .style(Style::default().bg(panel_bg)),
+            Paragraph::new(Line::from(left_spans)).style(Style::default().bg(panel_bg)),
             lrect,
         );
     }

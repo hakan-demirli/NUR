@@ -1702,22 +1702,28 @@ impl App {
             return;
         }
 
-        if self.sessions.sessions.current_is_child() && self.input.input.is_empty() {
-            match (code, mods) {
-                (KeyCode::Up, m) if m.is_empty() => {
-                    self.dispatch(Action::View(ViewAction::SubagentGoToParent));
-                    return;
+        if self.sessions.sessions.current_is_child() {
+            if self.input.input.is_empty() {
+                match (code, mods) {
+                    (KeyCode::Up, m) if m.is_empty() => {
+                        self.dispatch(Action::View(ViewAction::SubagentGoToParent));
+                    }
+                    (KeyCode::Right, m) if m.is_empty() => {
+                        self.dispatch(Action::View(ViewAction::SubagentCycleSibling(1)));
+                    }
+                    (KeyCode::Left, m) if m.is_empty() => {
+                        self.dispatch(Action::View(ViewAction::SubagentCycleSibling(-1)));
+                    }
+                    _ => {}
                 }
-                (KeyCode::Right, m) if m.is_empty() => {
-                    self.dispatch(Action::View(ViewAction::SubagentCycleSibling(1)));
-                    return;
-                }
-                (KeyCode::Left, m) if m.is_empty() => {
-                    self.dispatch(Action::View(ViewAction::SubagentCycleSibling(-1)));
-                    return;
-                }
+            }
+            match code {
+                KeyCode::Esc => self.runtime.push(Event::Interrupt),
+                KeyCode::PageUp => self.scroll.scroll_messages(-5),
+                KeyCode::PageDown => self.scroll.scroll_messages(5),
                 _ => {}
             }
+            return;
         }
 
         if matches!(code, KeyCode::Char('u')) && mods.contains(KeyModifiers::CONTROL) {
