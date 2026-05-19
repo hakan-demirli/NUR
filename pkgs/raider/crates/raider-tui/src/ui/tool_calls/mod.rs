@@ -17,6 +17,31 @@ pub(crate) mod error;
 use apply_patch::render_apply_patch_blocks;
 use error::push_tool_error_lines;
 
+fn push_wrapped_tool_lines<'a>(
+    out: &mut Vec<Line<'a>>,
+    text: &str,
+    style: Style,
+    bar: Span<'a>,
+    gap: Span<'a>,
+    width: usize,
+) {
+    let wrap_width = width.saturating_sub(4).max(1);
+    let opts = textwrap::Options::new(wrap_width).break_words(true);
+    for paragraph in text.split('\n') {
+        if paragraph.is_empty() {
+            out.push(Line::from(vec![bar.clone(), gap.clone()]));
+            continue;
+        }
+        for wrapped in textwrap::wrap(paragraph, &opts) {
+            out.push(Line::from(vec![
+                bar.clone(),
+                gap.clone(),
+                Span::styled(wrapped.into_owned(), style),
+            ]));
+        }
+    }
+}
+
 pub(crate) fn tool_is_inline(tool: &ToolCall) -> bool {
     use crate::action::ToolStatus;
     let running = matches!(tool.status, ToolStatus::Running | ToolStatus::Pending);
@@ -587,13 +612,16 @@ fn render_tool_call<'a>(
 
     if !has_output && !has_command {
         let inline_label = inline_title_for(tool, running);
-        let row = Line::from(vec![
+        let full_inline = format!("{leading} {inline_label}");
+        let mut out: Vec<Line<'a>> = Vec::new();
+        push_wrapped_tool_lines(
+            &mut out,
+            &full_inline,
+            body_style,
             bar.clone(),
             gap.clone(),
-            Span::styled(format!("{leading} "), body_style),
-            Span::styled(inline_label, body_style),
-        ]);
-        let mut out = vec![row];
+            width,
+        );
         if tool.name == "read" && !tool.loaded.is_empty() {
             for path in &tool.loaded {
                 out.push(Line::from(vec![
@@ -648,21 +676,27 @@ fn render_tool_call<'a>(
         "# ".to_string()
     };
     let title_style = Style::default().fg(theme.text);
-    out.push(Line::from(vec![
+    push_wrapped_tool_lines(
+        &mut out,
+        &format!("{header_prefix}{effective_title}"),
+        title_style,
         bar.clone(),
         gap.clone(),
-        Span::styled(format!("{header_prefix}{effective_title}"), title_style),
-    ]));
+        width,
+    );
 
     let cmd_style = Style::default().fg(theme.text);
     if let Some(cmd) = &tool.command {
         if !cmd.trim().is_empty() {
             out.push(Line::from(vec![bar.clone(), gap.clone()]));
-            out.push(Line::from(vec![
+            push_wrapped_tool_lines(
+                &mut out,
+                &format!("$ {cmd}"),
+                cmd_style,
                 bar.clone(),
                 gap.clone(),
-                Span::styled(format!("$ {cmd}"), cmd_style),
-            ]));
+                width,
+            );
         }
     }
 
@@ -683,11 +717,7 @@ fn render_tool_call<'a>(
         out.push(Line::from(vec![bar.clone(), gap.clone()]));
     }
     for line in shown {
-        out.push(Line::from(vec![
-            bar.clone(),
-            gap.clone(),
-            Span::styled(line.to_string(), body_style),
-        ]));
+        push_wrapped_tool_lines(&mut out, line, body_style, bar.clone(), gap.clone(), width);
     }
     if overflow_collapsed && !tool.expanded {
         out.push(Line::from(vec![

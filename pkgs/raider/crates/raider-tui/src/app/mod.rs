@@ -63,6 +63,7 @@ pub struct App {
     pub permissions: PermissionModalState,
     pub questions: QuestionModalState,
     pub runtime: RuntimeState,
+    pub last_text_width: usize,
     input_has_paste: bool,
     transcript_cache: HashMap<String, TranscriptSnapshot>,
     transcript_cache_lru: VecDeque<String>,
@@ -88,6 +89,7 @@ impl App {
             permissions: PermissionModalState::new(),
             questions: QuestionModalState::new(),
             runtime: RuntimeState::new(clock),
+            last_text_width: 80,
             input_has_paste: false,
             transcript_cache: HashMap::new(),
             transcript_cache_lru: VecDeque::new(),
@@ -1760,12 +1762,25 @@ impl App {
                 }
             }
             KeyCode::Up => {
-                self.input.history_prev();
-                self.input_has_paste = false;
+                let w = self.last_text_width;
+                let row = self.input.cursor_visual_row(w);
+                if row == 0 {
+                    self.input.history_prev();
+                    self.input_has_paste = false;
+                } else {
+                    self.input.move_cursor_up(w);
+                }
             }
             KeyCode::Down => {
-                self.input.history_next();
-                self.input_has_paste = false;
+                let w = self.last_text_width;
+                let row = self.input.cursor_visual_row(w);
+                let total = self.input.total_visual_rows(w);
+                if row >= total.saturating_sub(1) {
+                    self.input.history_next();
+                    self.input_has_paste = false;
+                } else {
+                    self.input.move_cursor_down(w);
+                }
             }
             KeyCode::PageUp => self.scroll.scroll_messages(-5),
             KeyCode::PageDown => self.scroll.scroll_messages(5),

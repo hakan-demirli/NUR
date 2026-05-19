@@ -74,6 +74,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     let text_width = preliminary_main_width
         .saturating_sub(1 + pad_left + pad_right)
         .max(1) as usize;
+    app.last_text_width = text_width;
     let (wrapped, cursor_pos) = wrap_input(&app.input.input, text_width, app);
     let visible_text_rows = wrapped.len().clamp(1, 6);
     let prompt_box_height = 1 + visible_text_rows as u16 + 1 + 1;

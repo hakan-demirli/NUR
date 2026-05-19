@@ -1,4 +1,5 @@
 use crossterm::event::{KeyCode, KeyModifiers};
+use unicode_width::UnicodeWidthStr;
 
 use crate::completion::CompletionManager;
 
@@ -302,6 +303,136 @@ impl InputState {
             self.parts.clear();
             self.completion.update(&self.input);
         }
+    }
+
+    fn visual_layout(&self, width: usize) -> (Vec<String>, Vec<usize>, usize, usize) {
+        let w = width.max(1);
+        let opts = textwrap::Options::new(w).break_words(true);
+        let mut rows: Vec<String> = Vec::new();
+        let mut row_byte_starts: Vec<usize> = Vec::new();
+        let mut cursor_row: usize = 0;
+        let mut cursor_col: usize = 0;
+        let mut cursor_found = false;
+        let mut current_byte_idx: usize = 0;
+
+        let parts: Vec<&str> = self.input.split('\n').collect();
+        let parts_count = parts.len();
+
+        for (i, part) in parts.iter().enumerate() {
+            let part_start = current_byte_idx;
+            let part_len = part.len();
+
+            let mut lines_for_part = Vec::new();
+            if part.is_empty() {
+                lines_for_part.push(String::new());
+            } else {
+                let s = format!("{}\u{200B}", part);
+                let wrapped = textwrap::wrap(&s, &opts);
+                let last_idx = wrapped.len().saturating_sub(1);
+                for (w_i, wl) in wrapped.iter().enumerate() {
+                    let mut s = wl.to_string();
+                    if w_i == last_idx && s.ends_with('\u{200B}') {
+                        s.pop();
+                    }
+                    lines_for_part.push(s);
+                }
+            }
+
+            let mut local = 0usize;
+            for (li, line_str) in lines_for_part.iter().enumerate() {
+                let line_bytes = line_str.len();
+                let g_start = part_start + local;
+                let g_end = g_start + line_bytes;
+                let is_last_visual = li == lines_for_part.len() - 1;
+
+                row_byte_starts.push(g_start);
+
+                if !cursor_found {
+                    if self.cursor_position >= g_start && self.cursor_position < g_end {
+                        let off = self.cursor_position - g_start;
+                        cursor_row = rows.len();
+                        cursor_col = UnicodeWidthStr::width(&line_str[..off]);
+                        cursor_found = true;
+                    } else if self.cursor_position == g_end && is_last_visual {
+                        cursor_row = rows.len();
+                        cursor_col = UnicodeWidthStr::width(line_str.as_str());
+                        cursor_found = true;
+                    }
+                }
+                rows.push(line_str.clone());
+                local += line_bytes;
+            }
+
+            current_byte_idx += part_len;
+            if i < parts_count - 1 {
+                current_byte_idx += 1;
+            }
+        }
+
+        if !cursor_found && self.cursor_position == current_byte_idx {
+            if rows.is_empty() {
+                rows.push(String::new());
+                row_byte_starts.push(0);
+            }
+            cursor_row = rows.len() - 1;
+            cursor_col = UnicodeWidthStr::width(rows.last().unwrap().as_str());
+        }
+
+        (rows, row_byte_starts, cursor_row, cursor_col)
+    }
+
+    pub fn cursor_visual_row(&self, width: usize) -> usize {
+        let (_, _, row, _) = self.visual_layout(width);
+        row
+    }
+
+    pub fn total_visual_rows(&self, width: usize) -> usize {
+        let (rows, _, _, _) = self.visual_layout(width);
+        rows.len()
+    }
+
+    pub fn move_cursor_up(&mut self, width: usize) -> bool {
+        let (rows, row_byte_starts, cur_row, cur_col) = self.visual_layout(width);
+        if cur_row == 0 {
+            return false;
+        }
+        let target_row = cur_row - 1;
+        let target_line = &rows[target_row];
+        let target_start = row_byte_starts[target_row];
+        let mut byte_off = 0usize;
+        let mut col = 0usize;
+        for ch in target_line.chars() {
+            let ch_w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if col + ch_w > cur_col {
+                break;
+            }
+            col += ch_w;
+            byte_off += ch.len_utf8();
+        }
+        self.cursor_position = target_start + byte_off;
+        true
+    }
+
+    pub fn move_cursor_down(&mut self, width: usize) -> bool {
+        let (rows, row_byte_starts, cur_row, cur_col) = self.visual_layout(width);
+        if cur_row >= rows.len().saturating_sub(1) {
+            return false;
+        }
+        let target_row = cur_row + 1;
+        let target_line = &rows[target_row];
+        let target_start = row_byte_starts[target_row];
+        let mut byte_off = 0usize;
+        let mut col = 0usize;
+        for ch in target_line.chars() {
+            let ch_w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if col + ch_w > cur_col {
+                break;
+            }
+            col += ch_w;
+            byte_off += ch.len_utf8();
+        }
+        self.cursor_position = target_start + byte_off;
+        true
     }
 
     pub fn history_prev(&mut self) {
