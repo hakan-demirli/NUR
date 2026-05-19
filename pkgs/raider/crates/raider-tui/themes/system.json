@@ -1,0 +1,64 @@
+{
+  "$schema": "https://opencode.ai/theme.json",
+  "theme": {
+    "primary": 6,
+    "secondary": 5,
+    "accent": 6,
+
+    "error": 1,
+    "warning": 3,
+    "success": 2,
+    "info": 6,
+
+    "text": "none",
+    "textMuted": 8,
+    "selectedListItemText": "none",
+
+    "background": "none",
+    "backgroundPanel": "none",
+    "backgroundElement": "none",
+    "backgroundMenu": "none",
+
+    "border": 8,
+    "borderActive": 7,
+    "borderSubtle": 8,
+
+    "diffAdded": 2,
+    "diffRemoved": 1,
+    "diffContext": 8,
+    "diffHunkHeader": 8,
+    "diffHighlightAdded": 10,
+    "diffHighlightRemoved": 9,
+    "diffAddedBg": "none",
+    "diffRemovedBg": "none",
+    "diffContextBg": "none",
+    "diffLineNumber": 8,
+    "diffAddedLineNumberBg": "none",
+    "diffRemovedLineNumberBg": "none",
+
+    "markdownText": "none",
+    "markdownHeading": "none",
+    "markdownLink": 4,
+    "markdownLinkText": 6,
+    "markdownCode": 2,
+    "markdownBlockQuote": 3,
+    "markdownEmph": 3,
+    "markdownStrong": "none",
+    "markdownHorizontalRule": 8,
+    "markdownListItem": 4,
+    "markdownListEnumeration": 6,
+    "markdownImage": 4,
+    "markdownImageText": 6,
+    "markdownCodeBlock": "none",
+
+    "syntaxComment": 8,
+    "syntaxKeyword": 5,
+    "syntaxFunction": 4,
+    "syntaxVariable": "none",
+    "syntaxString": 2,
+    "syntaxNumber": 3,
+    "syntaxType": 3,
+    "syntaxOperator": 5,
+    "syntaxPunctuation": "none"
+  }
+}

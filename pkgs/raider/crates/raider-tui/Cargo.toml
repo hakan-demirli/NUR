@@ -1,0 +1,30 @@
+[package]
+name = "raider-tui"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "Raider — a backend-agnostic TUI for chat-style LLM agents (opencode-compatible)."
+
+[lib]
+name = "raider_tui"
+path = "src/lib.rs"
+
+[dependencies]
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+textwrap = { workspace = true }
+pulldown-cmark = { workspace = true }
+syntect = { workspace = true }
+two-face = { workspace = true }
+fuzzy-matcher = { workspace = true }
+unicode-width = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+
+[dev-dependencies]
+ratatui = { workspace = true, features = ["unstable-backend-writer"] }

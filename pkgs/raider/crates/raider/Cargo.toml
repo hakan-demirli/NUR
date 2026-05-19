@@ -1,0 +1,22 @@
+[package]
+name = "raider"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "Raider binary — wires raider-tui to the opencode HTTP/SSE backend."
+
+[[bin]]
+name = "raider"
+path = "src/main.rs"
+
+[dependencies]
+raider-tui = { path = "../raider-tui" }
+raider-host = { path = "../raider-host" }
+raider-opencode = { path = "../raider-opencode" }
+
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+terminal-colorsaurus = "1.0"
