@@ -4,15 +4,15 @@
 
 pkgs.rustPlatform.buildRustPackage {
   pname = "uncomment";
-  version = "2.11.0";
+  version = "3.0.2";
 
   src = pkgs.fetchFromGitHub {
     owner = "Goldziher";
     repo = "uncomment";
-    rev = "fa0f93d90e70c0655da261fa269d5bbcea8c6b3c";
-    hash = "sha256-nNjl1RC6A7CMt2ow/Z5K++iPDda3GmBcPlWphmTEiPA=";
+    rev = "3ee8bb325a17b63f16d682219ee5b8ab123da767";
+    hash = "sha256-AzwOBDlAylF5gLiKOot1iBhgFbWpm8bKl+1rAGUs7Zg=";
   };
 
-  cargoHash = "sha256-Yjm2yOpMDMCVtdQrzed1zG67z2ASxjgUX52AqQ8/pGA=";
+  cargoHash = "sha256-ccJ1jhNfqrZSEf42nZyzLIIO7aD74LCNHalePRCDgZQ=";
   doCheck = false;
 }
