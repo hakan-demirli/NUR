@@ -736,7 +736,7 @@ impl App {
         let changed = self.models.current_model.as_ref() != Some(&model);
         self.models.current_model = Some(model.clone());
         if changed {
-            self.models.current_variant = None;
+            self.models.current_variant = self.models.variant_map.get(&model.wire()).cloned();
         }
         self.models.touch_recent(&model);
         self.refresh_completion_sources();
@@ -769,7 +769,8 @@ impl App {
         if self.models.current_variant == variant {
             return;
         }
-        self.models.current_variant = variant.clone();
+        self.models.set_current_variant(variant.clone());
+        let _ = self.models.save_to_disk();
         self.runtime.push(Event::VariantChanged(variant));
     }
 

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,7 @@ pub struct ModelState {
     pub catalog: ModelCatalog,
     pub current_model: Option<ModelRef>,
     pub current_variant: Option<String>,
+    pub variant_map: HashMap<String, String>,
     pub recent_models: Vec<ModelRef>,
     pub favorite_models: Vec<ModelRef>,
     pub thinking_hidden: Option<bool>,
@@ -22,6 +24,7 @@ impl ModelState {
             catalog: ModelCatalog::default(),
             current_model: None,
             current_variant: None,
+            variant_map: HashMap::new(),
             recent_models: Vec::new(),
             favorite_models: Vec::new(),
             thinking_hidden: None,
@@ -52,13 +55,25 @@ impl ModelState {
                 if keep_existing {
                     return;
                 }
+                let key = incoming.wire();
                 self.current_model = Some(incoming);
-                self.current_variant = None;
+                self.current_variant = self.variant_map.get(&key).cloned();
             }
         }
     }
 
     pub fn set_current_variant(&mut self, variant: Option<String>) {
+        if let Some(m) = &self.current_model {
+            let key = m.wire();
+            match &variant {
+                Some(v) => {
+                    self.variant_map.insert(key, v.clone());
+                }
+                None => {
+                    self.variant_map.remove(&key);
+                }
+            }
+        }
         self.current_variant = variant;
     }
 
@@ -68,6 +83,11 @@ impl ModelState {
             if !self.catalog.has(m) {
                 self.current_model = None;
                 self.current_variant = None;
+            }
+        }
+        if self.current_variant.is_none() {
+            if let Some(m) = &self.current_model {
+                self.current_variant = self.variant_map.get(&m.wire()).cloned();
             }
         }
         if let (Some(m), Some(v)) = (&self.current_model, self.current_variant.clone()) {
@@ -258,6 +278,7 @@ impl ModelState {
             recent: self.recent_models.iter().map(Into::into).collect(),
             favorite: self.favorite_models.iter().map(Into::into).collect(),
             thinking_hidden: self.thinking_hidden,
+            variant: self.variant_map.clone(),
         };
         let bytes = serde_json::to_vec_pretty(&payload).map_err(std::io::Error::other)?;
         std::fs::write(&path, bytes)
@@ -280,6 +301,10 @@ impl ModelState {
         self.recent_models.truncate(RECENT_MODELS_CAP);
         self.favorite_models = state.favorite.into_iter().map(Into::into).collect();
         self.thinking_hidden = state.thinking_hidden;
+        self.variant_map = state.variant;
+        if let Some(m) = &self.current_model {
+            self.current_variant = self.variant_map.get(&m.wire()).cloned();
+        }
     }
 }
 
@@ -299,6 +324,8 @@ struct PersistedModelState {
     favorite: Vec<PersistedModelRef>,
     #[serde(default, rename = "thinkingHidden")]
     thinking_hidden: Option<bool>,
+    #[serde(default)]
+    variant: HashMap<String, String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
