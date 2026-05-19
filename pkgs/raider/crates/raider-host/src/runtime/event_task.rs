@@ -103,7 +103,7 @@ pub(super) async fn event_task<B: Backend>(
                 let turn_finished = translation
                     .actions
                     .iter()
-                    .any(|a| matches!(a, Action::Host(HostAction::AssistantDone)));
+                    .any(|a| matches!(a, Action::Host(HostAction::AssistantDone { .. })));
                 for action in translation.actions {
                     let _ = action_tx.send(action);
                 }

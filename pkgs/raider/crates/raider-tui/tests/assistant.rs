@@ -13,12 +13,14 @@ fn assistant_streaming_appears_in_transcript() {
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "pon".into(),
         thoughts: false,
+        message_id: None,
     }));
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "g!".into(),
         thoughts: false,
+        message_id: None,
     }));
-    h.dispatch(Action::Host(HostAction::AssistantDone));
+    h.dispatch(Action::Host(HostAction::AssistantDone { message_id: None }));
 
     assert!(h.events().is_empty(), "streaming actions emit no events");
     let snap = h.snapshot();
@@ -91,6 +93,7 @@ fn user_message_submitted_while_busy_renders_queued_badge() {
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "thinking...".into(),
         thoughts: false,
+        message_id: None,
     }));
     h.dispatch(Action::User(UserAction::PasteText("second".into())));
     h.dispatch(Action::User(UserAction::SubmitInput));
@@ -118,6 +121,7 @@ fn queued_badge_clears_when_blocking_assistant_finalises() {
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "answer1".into(),
         thoughts: false,
+        message_id: Some("msg_0".into()),
     }));
     h.dispatch(Action::User(UserAction::PasteText("second".into())));
     h.dispatch(Action::User(UserAction::SubmitInput));
@@ -132,7 +136,9 @@ fn queued_badge_clears_when_blocking_assistant_finalises() {
         provider_id: Some("opencode".into()),
         duration: Some(std::time::Duration::from_millis(9_700)),
     }));
-    h.dispatch(Action::Host(HostAction::AssistantDone));
+    h.dispatch(Action::Host(HostAction::AssistantDone {
+        message_id: Some("msg_0".into()),
+    }));
     let assistants: Vec<_> = h
         .app
         .messages
@@ -178,8 +184,11 @@ fn three_back_to_back_submits_all_unqueue_as_assistants_complete() {
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "answer_0".into(),
         thoughts: false,
+        message_id: Some("msg_0".into()),
     }));
-    h.dispatch(Action::Host(HostAction::AssistantDone));
+    h.dispatch(Action::Host(HostAction::AssistantDone {
+        message_id: Some("msg_0".into()),
+    }));
     h.draw();
     let after_first = h.snapshot();
     let q1 = after_first.matches("QUEUED").count();
@@ -192,8 +201,11 @@ fn three_back_to_back_submits_all_unqueue_as_assistants_complete() {
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "answer_1".into(),
         thoughts: false,
+        message_id: Some("msg_1".into()),
     }));
-    h.dispatch(Action::Host(HostAction::AssistantDone));
+    h.dispatch(Action::Host(HostAction::AssistantDone {
+        message_id: Some("msg_1".into()),
+    }));
     h.draw();
     let after_second = h.snapshot();
     let q2 = after_second.matches("QUEUED").count();
@@ -216,6 +228,7 @@ fn queued_prompt_deltas_attach_above_queued_user_message() {
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "FIRST_ANSWER".into(),
         thoughts: false,
+        message_id: None,
     }));
     h.draw();
     let snap = h.snapshot();
@@ -227,10 +240,11 @@ fn queued_prompt_deltas_attach_above_queued_user_message() {
         "first assistant answer must render between the first user and queued second user:\n{snap}",
     );
 
-    h.dispatch(Action::Host(HostAction::AssistantDone));
+    h.dispatch(Action::Host(HostAction::AssistantDone { message_id: None }));
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "SECOND_ANSWER".into(),
         thoughts: false,
+        message_id: None,
     }));
     h.draw();
     let snap = h.snapshot();
@@ -412,6 +426,7 @@ fn assistant_reasoning_thinking_header_inlines_with_body_on_same_row() {
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "weighing options now".into(),
         thoughts: true,
+        message_id: None,
     }));
     h.draw();
     let snap = h.snapshot();
@@ -433,6 +448,7 @@ fn assistant_reasoning_label_flips_to_thought_when_stream_finishes() {
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "examining tradeoffs".into(),
         thoughts: true,
+        message_id: None,
     }));
     let streaming = h.snapshot();
     assert!(
@@ -440,7 +456,7 @@ fn assistant_reasoning_label_flips_to_thought_when_stream_finishes() {
         "streaming reasoning must show Thinking; snap:\n{streaming}",
     );
 
-    h.dispatch(Action::Host(HostAction::AssistantDone));
+    h.dispatch(Action::Host(HostAction::AssistantDone { message_id: None }));
     let done = h.snapshot();
     assert!(
         done.contains("Thought: examining tradeoffs"),
@@ -597,6 +613,7 @@ fn host_update_last_assistant_meta_patches_streaming_message() {
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "yo".into(),
         thoughts: false,
+        message_id: None,
     }));
     h.dispatch(Action::Host(HostAction::UpdateLastAssistantMeta {
         agent: Some("build".into()),

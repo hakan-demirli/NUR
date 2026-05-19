@@ -44,8 +44,9 @@ fn full_conversation_stream_rebuilds_assistant_reply() {
                 Action::Host(HostAction::AssistantDelta {
                     text,
                     thoughts: false,
+                    ..
                 }) => deltas.push(text),
-                Action::Host(HostAction::AssistantDone) => done_count += 1,
+                Action::Host(HostAction::AssistantDone { .. }) => done_count += 1,
                 Action::Host(HostAction::SetBusy(true)) => busy_on_count += 1,
                 Action::Host(HostAction::SetBusy(false)) => busy_off_count += 1,
                 _ => {}
@@ -93,7 +94,7 @@ fn conversation_for_other_session_is_ignored_by_translator() {
                 "no deltas should fire when active session != event session, got {action:?}",
             );
             assert!(
-                !matches!(action, Action::Host(HostAction::AssistantDone)),
+                !matches!(action, Action::Host(HostAction::AssistantDone { .. })),
                 "no AssistantDone should fire either, got {action:?}",
             );
         }
@@ -527,6 +528,7 @@ async fn fresh_session_conversation_assistant_reply_reaches_app() {
             Action::Host(HostAction::AssistantDelta {
                 text,
                 thoughts: false,
+                ..
             }) => Some(text.as_str()),
             _ => None,
         })
@@ -544,7 +546,7 @@ async fn fresh_session_conversation_assistant_reply_reaches_app() {
 
     let done_count = actions
         .iter()
-        .filter(|a| matches!(a, Action::Host(HostAction::AssistantDone)))
+        .filter(|a| matches!(a, Action::Host(HostAction::AssistantDone { .. })))
         .count();
     assert_eq!(
         done_count, 2,
@@ -669,6 +671,7 @@ fn real_wire_capture_decodes_and_translates_deltas() {
             if let Action::Host(HostAction::AssistantDelta {
                 text,
                 thoughts: false,
+                ..
             }) = action
             {
                 deltas.push(text);
@@ -719,7 +722,7 @@ fn message_part_delta_routes_text_vs_reasoning() {
         let ev: ServerEvent = parse_frame(line).expect("decode");
         let t = translate(ev, Some(&active), &mut mirror);
         for action in t.actions {
-            if let Action::Host(HostAction::AssistantDelta { text, thoughts }) = action {
+            if let Action::Host(HostAction::AssistantDelta { text, thoughts, .. }) = action {
                 if thoughts {
                     thought_deltas.push(text);
                 } else {

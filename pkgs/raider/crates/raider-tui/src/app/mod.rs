@@ -333,10 +333,14 @@ impl App {
             HostAction::QuestionDismissed(id) => self.questions.host_dismissed(id),
 
             HostAction::SystemMessage(content) => self.push_system_message(content),
-            HostAction::AssistantDelta { text, thoughts } => {
-                self.append_assistant_delta(&text, thoughts)
-            }
-            HostAction::AssistantDone => self.messages.finish_streaming_assistant(),
+            HostAction::AssistantDelta {
+                text,
+                thoughts,
+                message_id,
+            } => self.append_assistant_delta(&text, thoughts, message_id.as_deref()),
+            HostAction::AssistantDone { message_id } => self
+                .messages
+                .finish_streaming_assistant(message_id.as_deref()),
         }
     }
 
@@ -542,7 +546,12 @@ impl App {
         self.messages.host_append(message, || ts.clone());
     }
 
-    fn append_assistant_delta(&mut self, text: &str, thoughts: bool) {
+    fn append_assistant_delta(
+        &mut self,
+        text: &str,
+        thoughts: bool,
+        server_message_id: Option<&str>,
+    ) {
         let ts = self.runtime.now_hhmm();
         let agent = Some(self.agents.current().name.clone());
         let model = self
@@ -555,9 +564,10 @@ impl App {
             .current_model
             .as_ref()
             .map(|m| m.provider_id.clone());
-        self.messages.append_assistant_delta(text, thoughts, || {
-            Message::assistant_streaming_with_meta(ts, agent, model, provider_id)
-        });
+        self.messages
+            .append_assistant_delta(text, thoughts, server_message_id, || {
+                Message::assistant_streaming_with_meta(ts, agent, model, provider_id)
+            });
     }
 
     pub fn submit_input(&mut self) {
@@ -583,7 +593,8 @@ impl App {
             return;
         }
 
-        self.input.push_history(&raw_for_history);
+        let parts_for_history = self.input.parts.clone();
+        self.input.push_history(&raw_for_history, parts_for_history);
         let file_parts = self.input.take_file_parts();
         self.input.input.clear();
         self.input.cursor_position = 0;
@@ -1767,7 +1778,7 @@ impl App {
                 let row = self.input.cursor_visual_row(w);
                 if row == 0 {
                     self.input.history_prev();
-                    self.input_has_paste = false;
+                    self.input_has_paste = self.input.has_text_parts();
                 } else {
                     self.input.move_cursor_up(w);
                 }
@@ -1778,7 +1789,7 @@ impl App {
                 let total = self.input.total_visual_rows(w);
                 if row >= total.saturating_sub(1) {
                     self.input.history_next();
-                    self.input_has_paste = false;
+                    self.input_has_paste = self.input.has_text_parts();
                 } else {
                     self.input.move_cursor_down(w);
                 }

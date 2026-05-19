@@ -398,8 +398,11 @@ pub enum HostAction {
     AssistantDelta {
         text: String,
         thoughts: bool,
+        message_id: Option<String>,
     },
-    AssistantDone,
+    AssistantDone {
+        message_id: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

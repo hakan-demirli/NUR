@@ -121,6 +121,7 @@ fn scrolling_back_to_bottom_re_engages_auto_stick() {
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "fresh tail".into(),
         thoughts: false,
+        message_id: None,
     }));
     let total = h.app.scroll.total_visual_lines;
     let viewport = h.app.scroll.last_messages_viewport_rows.max(1);
@@ -158,6 +159,7 @@ fn streaming_deltas_do_not_yank_viewport_back_to_bottom_when_user_scrolled_up() 
         h.dispatch(Action::Host(HostAction::AssistantDelta {
             text: format!("delta-{i} "),
             thoughts: false,
+            message_id: None,
         }));
         h.draw();
         assert!(

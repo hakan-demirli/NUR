@@ -119,7 +119,8 @@ pub(super) async fn ui_event_task<B: Backend>(ctx: UiEventTask<B>) {
                         report_backend_error(&action_tx_c, "Failed to interrupt session", &e);
                     } else {
                         let _ = action_tx_c.send(Action::Host(HostAction::SetBusy(false)));
-                        let _ = action_tx_c.send(Action::Host(HostAction::AssistantDone));
+                        let _ = action_tx_c
+                            .send(Action::Host(HostAction::AssistantDone { message_id: None }));
                     }
                 });
             }
@@ -308,7 +309,7 @@ fn handle_session_switched<B: Backend>(
     }
     let _ = action_tx.send(Action::Host(HostAction::SetBusy(false)));
     let _ = action_tx.send(Action::Host(HostAction::SetUsage(None)));
-    let _ = action_tx.send(Action::Host(HostAction::AssistantDone));
+    let _ = action_tx.send(Action::Host(HostAction::AssistantDone { message_id: None }));
     let _ = refetch_tx.send(sid.clone());
     fetch_pending_permissions_for_session(backend, action_tx, sid.clone());
     fetch_pending_questions_for_session(backend, action_tx, sid);
@@ -341,7 +342,7 @@ fn handle_new_command<B: Backend>(
     let _ = action_tx.send(Action::Host(HostAction::SetSidebarSections(Vec::new())));
     let _ = action_tx.send(Action::Host(HostAction::SetBusy(false)));
     let _ = action_tx.send(Action::Host(HostAction::SetUsage(None)));
-    let _ = action_tx.send(Action::Host(HostAction::AssistantDone));
+    let _ = action_tx.send(Action::Host(HostAction::AssistantDone { message_id: None }));
 }
 
 fn handle_share_command<B: Backend>(

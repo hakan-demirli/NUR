@@ -156,8 +156,9 @@ fn clear_command_wipes_transcript_and_forwards_event() {
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "b".into(),
         thoughts: false,
+        message_id: None,
     }));
-    h.dispatch(Action::Host(HostAction::AssistantDone));
+    h.dispatch(Action::Host(HostAction::AssistantDone { message_id: None }));
 
     assert!(!h.app.messages.is_empty());
 
@@ -273,8 +274,9 @@ fn slash_export_emits_event_with_markdown_and_filename() {
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "pong".into(),
         thoughts: false,
+        message_id: None,
     }));
-    h.dispatch(Action::Host(HostAction::AssistantDone));
+    h.dispatch(Action::Host(HostAction::AssistantDone { message_id: None }));
     h.clear_events();
 
     h.dispatch(Action::View(ViewAction::Command("/export".into())));
@@ -504,8 +506,9 @@ fn copy_last_assistant_message_emits_clipboard_event() {
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "pong  \n".into(),
         thoughts: false,
+        message_id: None,
     }));
-    h.dispatch(Action::Host(HostAction::AssistantDone));
+    h.dispatch(Action::Host(HostAction::AssistantDone { message_id: None }));
     h.clear_events();
 
     h.dispatch(Action::View(ViewAction::CopyLastAssistantMessage));
@@ -530,8 +533,9 @@ fn copy_session_transcript_emits_clipboard_event_with_toast_messages() {
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "pong".into(),
         thoughts: false,
+        message_id: None,
     }));
-    h.dispatch(Action::Host(HostAction::AssistantDone));
+    h.dispatch(Action::Host(HostAction::AssistantDone { message_id: None }));
     h.clear_events();
 
     h.dispatch(Action::View(ViewAction::CopySessionTranscript));
@@ -604,7 +608,7 @@ fn copy_last_assistant_message_with_blank_content_shows_error_toast() {
     pin_dummy_model(&mut h);
     h.dispatch(Action::User(UserAction::PasteText("ping".into())));
     h.dispatch(Action::User(UserAction::SubmitInput));
-    h.dispatch(Action::Host(HostAction::AssistantDone));
+    h.dispatch(Action::Host(HostAction::AssistantDone { message_id: None }));
     h.clear_events();
 
     h.dispatch(Action::View(ViewAction::CopyLastAssistantMessage));

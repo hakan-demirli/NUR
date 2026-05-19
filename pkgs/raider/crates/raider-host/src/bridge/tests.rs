@@ -73,7 +73,7 @@ fn message_part_updated_text_emits_delta_and_busy() {
     let t = translate(ev, Some(&active), &mut mirror);
     assert!(matches!(
         t.actions.as_slice(),
-        [Action::Host(HostAction::AssistantDelta { text, thoughts: false }), Action::Host(HostAction::SetBusy(true))] if text == "hi"
+        [Action::Host(HostAction::AssistantDelta { text, thoughts: false, .. }), Action::Host(HostAction::SetBusy(true))] if text == "hi"
     ));
 }
 
@@ -88,7 +88,7 @@ fn session_idle_for_active_emits_done() {
     assert!(
         t.actions
             .iter()
-            .any(|a| matches!(a, Action::Host(HostAction::AssistantDone))),
+            .any(|a| matches!(a, Action::Host(HostAction::AssistantDone { .. }))),
         "active session.idle must finish the assistant: {:?}",
         t.actions,
     );
@@ -980,7 +980,7 @@ fn message_part_updated_then_delta_routes_reasoning_to_thoughts() {
     let found = t.actions.iter().any(|a| {
             matches!(
                 a,
-                Action::Host(HostAction::AssistantDelta { text, thoughts: true }) if text == "I'm thinking about this"
+                Action::Host(HostAction::AssistantDelta { text, thoughts: true, .. }) if text == "I'm thinking about this"
             )
         });
     assert!(
@@ -1022,7 +1022,7 @@ fn message_part_updated_text_then_delta_keeps_text_routing() {
     let found = t.actions.iter().any(|a| {
             matches!(
                 a,
-                Action::Host(HostAction::AssistantDelta { text, thoughts: false }) if text == "Hello world"
+                Action::Host(HostAction::AssistantDelta { text, thoughts: false, .. }) if text == "Hello world"
             )
         });
     assert!(
@@ -1084,7 +1084,7 @@ fn message_updated_with_completed_emits_meta_patch() {
     let done_idx = t
         .actions
         .iter()
-        .position(|a| matches!(a, Action::Host(HostAction::AssistantDone)))
+        .position(|a| matches!(a, Action::Host(HostAction::AssistantDone { .. })))
         .unwrap();
     assert!(
         meta_idx < done_idx,
@@ -2700,7 +2700,7 @@ fn session_error_unwraps_anthropic_nested_data_message() {
     assert!(
         t.actions.iter().any(|a| matches!(
             a,
-            raider_tui::action::Action::Host(HostAction::AssistantDone)
+            raider_tui::action::Action::Host(HostAction::AssistantDone { .. })
         )),
         "must finish the streaming assistant message",
     );
@@ -2763,7 +2763,7 @@ fn session_error_message_aborted_is_silently_swallowed() {
     );
     assert!(t.actions.iter().any(|a| matches!(
         a,
-        raider_tui::action::Action::Host(HostAction::AssistantDone)
+        raider_tui::action::Action::Host(HostAction::AssistantDone { .. })
     )),);
 }
 

@@ -38,9 +38,10 @@ pub struct InputState {
 
     pub completion: CompletionManager,
 
-    pub input_history: Vec<String>,
+    pub input_history: Vec<(String, Vec<PromptPart>)>,
     pub history_index: usize,
     pub saved_input: String,
+    pub saved_parts: Vec<PromptPart>,
 
     pub parts: Vec<PromptPart>,
 }
@@ -55,8 +56,15 @@ impl InputState {
             input_history: Vec::new(),
             history_index: 0,
             saved_input: String::new(),
+            saved_parts: Vec::new(),
             parts: Vec::new(),
         }
+    }
+
+    pub fn has_text_parts(&self) -> bool {
+        self.parts
+            .iter()
+            .any(|p| matches!(p.kind, PromptPartKind::Text(_)))
     }
 
     fn drop_parts_overlapping(&mut self, start: usize, end: usize) {
@@ -441,11 +449,13 @@ impl InputState {
         }
         if self.history_index == self.input_history.len() {
             self.saved_input = self.input.clone();
+            self.saved_parts = self.parts.clone();
         }
         self.history_index -= 1;
-        self.input = self.input_history[self.history_index].clone();
+        let (text, parts) = &self.input_history[self.history_index];
+        self.input = text.clone();
+        self.parts = parts.clone();
         self.cursor_position = self.input.len();
-        self.parts.clear();
     }
 
     pub fn history_next(&mut self) {
@@ -453,21 +463,24 @@ impl InputState {
             return;
         }
         self.history_index += 1;
-        self.input = if self.history_index == self.input_history.len() {
-            self.saved_input.clone()
+        if self.history_index == self.input_history.len() {
+            self.input = self.saved_input.clone();
+            self.parts = self.saved_parts.clone();
         } else {
-            self.input_history[self.history_index].clone()
-        };
+            let (text, parts) = &self.input_history[self.history_index];
+            self.input = text.clone();
+            self.parts = parts.clone();
+        }
         self.cursor_position = self.input.len();
-        self.parts.clear();
     }
 
-    pub fn push_history(&mut self, raw: &str) {
-        if self.input_history.last().map(String::as_str) != Some(raw) {
-            self.input_history.push(raw.to_string());
+    pub fn push_history(&mut self, raw: &str, parts: Vec<PromptPart>) {
+        if self.input_history.last().map(|(s, _)| s.as_str()) != Some(raw) {
+            self.input_history.push((raw.to_string(), parts));
         }
         self.history_index = self.input_history.len();
         self.saved_input.clear();
+        self.saved_parts.clear();
     }
 
     pub fn handle_completion_key(

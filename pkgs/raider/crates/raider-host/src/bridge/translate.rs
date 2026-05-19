@@ -82,7 +82,7 @@ pub fn translate(
                 busy: false,
             }));
             if Some(&session_id) == active_session {
-                out.push(Action::Host(HostAction::AssistantDone));
+                out.push(Action::Host(HostAction::AssistantDone { message_id: None }));
                 out.push(Action::Host(HostAction::SetBusy(false)));
             }
         }
@@ -103,7 +103,7 @@ pub fn translate(
                     }));
                 }
                 if is_message_aborted_error(&p.error) {
-                    out.push(Action::Host(HostAction::AssistantDone));
+                    out.push(Action::Host(HostAction::AssistantDone { message_id: None }));
                     out.push(Action::Host(HostAction::SetBusy(false)));
                 } else {
                     let msg = unwrap_error_message(&p.error)
@@ -112,7 +112,7 @@ pub fn translate(
                         raider_tui::Toast::new(msg.clone(), raider_tui::ToastVariant::Error),
                     )));
                     out.push(Action::Host(HostAction::SetLastAssistantError(msg)));
-                    out.push(Action::Host(HostAction::AssistantDone));
+                    out.push(Action::Host(HostAction::AssistantDone { message_id: None }));
                     out.push(Action::Host(HostAction::SetBusy(false)));
                 }
             }
@@ -156,7 +156,9 @@ pub fn translate(
                             busy: false,
                         }));
                     }
-                    out.push(Action::Host(HostAction::AssistantDone));
+                    out.push(Action::Host(HostAction::AssistantDone {
+                        message_id: Some(info.info.id.as_str().to_string()),
+                    }));
                     out.push(Action::Host(HostAction::SetBusy(false)));
                 } else {
                     out.push(Action::Host(HostAction::SetBusy(true)));
@@ -270,6 +272,7 @@ pub fn translate(
             out.push(Action::Host(HostAction::AssistantDelta {
                 text: delta,
                 thoughts,
+                message_id: Some(message_id.as_str().to_string()),
             }));
             out.push(Action::Host(HostAction::SetBusy(true)));
         }
@@ -339,12 +342,14 @@ fn handle_part(
     message_id: MessageId,
     part: MessagePart,
 ) {
+    let mid_str = Some(message_id.as_str().to_string());
     match part {
         MessagePart::Text(t) => {
             if let Some(delta) = mirror.diff_text(message_id, t.id, &t.text) {
                 out.actions.push(Action::Host(HostAction::AssistantDelta {
                     text: delta,
                     thoughts: false,
+                    message_id: mid_str,
                 }));
                 out.actions.push(Action::Host(HostAction::SetBusy(true)));
             }
@@ -354,6 +359,7 @@ fn handle_part(
                 out.actions.push(Action::Host(HostAction::AssistantDelta {
                     text: delta,
                     thoughts: true,
+                    message_id: mid_str,
                 }));
                 out.actions.push(Action::Host(HostAction::SetBusy(true)));
             }

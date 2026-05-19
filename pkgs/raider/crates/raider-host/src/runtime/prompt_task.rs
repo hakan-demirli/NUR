@@ -58,7 +58,8 @@ pub(super) async fn prompt_task<B: Backend>(ctx: PromptTask<B>) {
                 let _ = action_tx.send(Action::Host(HostAction::SystemMessage(
                     "Pick a model with /models before sending a message".to_string(),
                 )));
-                let _ = action_tx.send(Action::Host(HostAction::AssistantDone));
+                let _ =
+                    action_tx.send(Action::Host(HostAction::AssistantDone { message_id: None }));
                 continue;
             }
         };
@@ -85,7 +86,8 @@ pub(super) async fn prompt_task<B: Backend>(ctx: PromptTask<B>) {
                     let _ = action_tx.send(Action::Host(HostAction::SystemMessage(format!(
                         "Failed to create session: {e}"
                     ))));
-                    let _ = action_tx.send(Action::Host(HostAction::AssistantDone));
+                    let _ = action_tx
+                        .send(Action::Host(HostAction::AssistantDone { message_id: None }));
                     continue;
                 }
             },
@@ -130,7 +132,7 @@ pub(super) async fn prompt_task<B: Backend>(ctx: PromptTask<B>) {
             let _ = action_tx.send(Action::Host(HostAction::SystemMessage(format!(
                 "Failed to send prompt: {e}"
             ))));
-            let _ = action_tx.send(Action::Host(HostAction::AssistantDone));
+            let _ = action_tx.send(Action::Host(HostAction::AssistantDone { message_id: None }));
         }
     }
 }

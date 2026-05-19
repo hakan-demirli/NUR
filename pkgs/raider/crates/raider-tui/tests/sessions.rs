@@ -81,6 +81,7 @@ fn switching_back_restores_cached_transcript_immediately() {
     h.dispatch(Action::Host(HostAction::AssistantDelta {
         text: "live worker output".into(),
         thoughts: false,
+        message_id: None,
     }));
 
     h.dispatch(Action::View(ViewAction::SwitchSession("s-2".into())));

@@ -426,7 +426,7 @@ async fn read_only_viewer_end_to_end() {
     assert!(
         actions
             .iter()
-            .any(|a| matches!(a, Action::Host(HostAction::AssistantDelta { text, thoughts: false }) if text == "hi")),
+            .any(|a| matches!(a, Action::Host(HostAction::AssistantDelta { text, thoughts: false, .. }) if text == "hi")),
         "expected AssistantDelta(hi), got {actions:#?}",
     );
 
@@ -441,7 +441,7 @@ async fn read_only_viewer_end_to_end() {
     assert!(
         actions
             .iter()
-            .any(|a| matches!(a, Action::Host(HostAction::AssistantDone))),
+            .any(|a| matches!(a, Action::Host(HostAction::AssistantDone { .. }))),
         "expected AssistantDone, got {actions:#?}",
     );
 
@@ -1245,7 +1245,7 @@ async fn interrupt_event_dispatches_session_abort() {
     assert!(
         actions
             .iter()
-            .any(|a| matches!(a, Action::Host(HostAction::AssistantDone))),
+            .any(|a| matches!(a, Action::Host(HostAction::AssistantDone { .. }))),
         "interrupt must surface AssistantDone so the spinner stops; \
          actions: {actions:#?}",
     );

@@ -147,16 +147,10 @@ impl MessageStore {
         &mut self,
         text: &str,
         thoughts: bool,
+        server_message_id: Option<&str>,
         make_streaming_message: impl FnOnce() -> Message,
     ) {
-        let target_idx = self
-            .messages
-            .iter()
-            .position(|m| m.sender == Sender::Assistant && m.is_streaming)
-            .unwrap_or_else(|| {
-                self.messages.push(make_streaming_message());
-                self.messages.len() - 1
-            });
+        let target_idx = self.resolve_streaming_target(server_message_id, make_streaming_message);
 
         if let Some(msg) = self.messages.get_mut(target_idx) {
             if thoughts {
@@ -176,14 +170,57 @@ impl MessageStore {
         }
     }
 
-    pub fn finish_streaming_assistant(&mut self) {
-        if let Some(msg) = self
+    fn resolve_streaming_target(
+        &mut self,
+        server_message_id: Option<&str>,
+        make_streaming_message: impl FnOnce() -> Message,
+    ) -> usize {
+        if let Some(mid) = server_message_id {
+            if let Some(idx) = self
+                .messages
+                .iter()
+                .position(|m| m.server_id.as_deref() == Some(mid))
+            {
+                return idx;
+            }
+            if let Some(idx) = self.messages.iter().position(|m| {
+                m.sender == Sender::Assistant && m.is_streaming && m.server_id.is_none()
+            }) {
+                self.messages[idx].server_id = Some(mid.to_string());
+                return idx;
+            }
+        }
+        if let Some(idx) = self
             .messages
-            .iter_mut()
-            .find(|m| m.sender == Sender::Assistant && m.is_streaming)
+            .iter()
+            .position(|m| m.sender == Sender::Assistant && m.is_streaming)
         {
-            msg.is_streaming = false;
-            msg.invalidate_render_cache();
+            return idx;
+        }
+        self.messages.push(make_streaming_message());
+        self.messages.len() - 1
+    }
+
+    pub fn finish_streaming_assistant(&mut self, message_id: Option<&str>) {
+        match message_id {
+            Some(mid) => {
+                if let Some(msg) = self.messages.iter_mut().find(|m| {
+                    m.sender == Sender::Assistant
+                        && m.is_streaming
+                        && m.server_id.as_deref() == Some(mid)
+                }) {
+                    msg.is_streaming = false;
+                    msg.invalidate_render_cache();
+                }
+            }
+            None => {
+                for msg in &mut self.messages {
+                    if msg.sender == Sender::Assistant && msg.is_streaming {
+                        msg.is_streaming = false;
+                        msg.invalidate_render_cache();
+                    }
+                }
+            }
         }
     }
 
