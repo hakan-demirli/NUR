@@ -4,9 +4,10 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch;
 
 use raider_opencode::types::common::SessionId;
-use raider_tui::{Action, HostAction, ModelRef, ViewAction};
+use raider_tui::{Action, HostAction, ModelRef, Toast, ToastVariant, ViewAction};
 
 use crate::backend::Backend;
+use crate::bridge::session_to_entry;
 
 use super::helpers::{
     fetch_pending_permissions_for_session, fetch_pending_questions_for_session,
@@ -259,6 +260,15 @@ pub(super) async fn ui_event_task<B: Backend>(ctx: UiEventTask<B>) {
                     }
                 });
             }
+            raider_tui::Event::RenameSession { session_id, title } => {
+                handle_rename_session(
+                    &backend,
+                    &action_tx,
+                    &active_tx,
+                    SessionId::new(session_id),
+                    title,
+                );
+            }
             raider_tui::Event::Command { name, args } if name == "rename" => {
                 let Some(session_id) = active_tx.borrow().clone() else {
                     let _ = action_tx.send(Action::Host(HostAction::SystemMessage(
@@ -266,22 +276,7 @@ pub(super) async fn ui_event_task<B: Backend>(ctx: UiEventTask<B>) {
                     )));
                     continue;
                 };
-                let title = args.clone();
-                let backend_c = Arc::clone(&backend);
-                let action_tx_c = action_tx.clone();
-                tokio::spawn(async move {
-                    match backend_c.session_rename(&session_id, &title).await {
-                        Ok(_) => {
-                            let _ = action_tx_c.send(Action::Host(HostAction::SystemMessage(
-                                format!("Renamed session to: {title}"),
-                            )));
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = %e, "session.rename failed");
-                            report_backend_error(&action_tx_c, "Failed to rename", &e);
-                        }
-                    }
-                });
+                handle_rename_session(&backend, &action_tx, &active_tx, session_id, args);
             }
             raider_tui::Event::Command { name, args: _ } if name == "compact" => {
                 handle_compact_command(&backend, &action_tx, &active_tx, &model_tx);
@@ -289,6 +284,47 @@ pub(super) async fn ui_event_task<B: Backend>(ctx: UiEventTask<B>) {
             _ => {}
         }
     }
+}
+
+fn handle_rename_session<B: Backend>(
+    backend: &Arc<B>,
+    action_tx: &UnboundedSender<Action>,
+    active_tx: &watch::Sender<Option<SessionId>>,
+    session_id: SessionId,
+    title: String,
+) {
+    let active_id = active_tx
+        .borrow()
+        .as_ref()
+        .map(|id| id.as_str().to_string());
+    let backend_c = Arc::clone(backend);
+    let action_tx_c = action_tx.clone();
+    tokio::spawn(async move {
+        match backend_c.session_rename(&session_id, &title).await {
+            Ok(session) => {
+                let is_active = active_id.as_deref() == Some(session.id.as_str());
+                let sidebar_title = if session.title.trim().is_empty() {
+                    session.id.as_str().to_string()
+                } else {
+                    session.title.clone()
+                };
+                let entry = session_to_entry(&session, active_id.as_deref());
+                let _ = action_tx_c.send(Action::Host(HostAction::UpsertSession(entry)));
+                if is_active {
+                    let _ =
+                        action_tx_c.send(Action::Host(HostAction::SetSidebarTitle(sidebar_title)));
+                }
+                let _ = action_tx_c.send(Action::View(ViewAction::ShowToast(Toast::new(
+                    format!("Renamed session to: {title}"),
+                    ToastVariant::Success,
+                ))));
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "session.rename failed");
+                report_backend_error(&action_tx_c, "Failed to rename", &e);
+            }
+        }
+    });
 }
 
 fn handle_session_switched<B: Backend>(

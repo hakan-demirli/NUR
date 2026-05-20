@@ -220,6 +220,59 @@ fn command_palette_lists_toggle_sidebar() {
 }
 
 #[test]
+fn command_palette_rename_opens_prefilled_prompt() {
+    use raider_tui::SessionEntry;
+
+    let mut h = Harness::new(120, 30);
+    h.app
+        .sessions
+        .set_sessions(vec![SessionEntry::new("s-1", "Old title", "now")]);
+    h.app.sessions.set_current(Some("s-1".into()));
+
+    h.dispatch(ctrl('p'));
+    type_text(&mut h, "rename");
+    h.dispatch(special(KeyCode::Enter));
+
+    let dialog = h.app.dialogs.dialog.as_ref().expect("rename prompt open");
+    assert_eq!(dialog.kind(), DialogKind::SessionRename);
+    assert_eq!(dialog.title, "Rename Session");
+    assert_eq!(dialog.filter, "Old title");
+    match &dialog.payload {
+        DialogPayload::SessionRename { session_id, title } => {
+            assert_eq!(session_id, "s-1");
+            assert_eq!(title, "Old title");
+        }
+        other => panic!("expected SessionRename payload, got {other:?}"),
+    }
+
+    let snap = h.snapshot();
+    assert!(snap.contains("Rename Session"), "snap:\n{snap}");
+    assert!(snap.contains("esc"), "snap:\n{snap}");
+    assert!(snap.contains("enter submit"), "snap:\n{snap}");
+}
+
+#[test]
+fn ctrl_r_opens_current_session_rename_prompt() {
+    use raider_tui::SessionEntry;
+
+    let mut h = Harness::new(120, 30);
+    h.app
+        .sessions
+        .set_sessions(vec![SessionEntry::new("s-1", "Old title", "now")]);
+    h.app.sessions.set_current(Some("s-1".into()));
+
+    h.dispatch(ctrl('r'));
+
+    let dialog = h.app.dialogs.dialog.as_ref().expect("rename prompt open");
+    assert_eq!(dialog.kind(), DialogKind::SessionRename);
+    assert_eq!(dialog.filter, "Old title");
+    match &dialog.payload {
+        DialogPayload::SessionRename { session_id, .. } => assert_eq!(session_id, "s-1"),
+        other => panic!("expected SessionRename payload, got {other:?}"),
+    }
+}
+
+#[test]
 fn timestamps_hidden_by_default() {
     assert!(!Harness::new(80, 24).app.messages.show_timestamps);
 }
@@ -391,9 +444,14 @@ fn slash_rename_emits_command_event_with_title_args() {
 }
 
 #[test]
-fn slash_rename_with_no_args_emits_usage_hint_no_event() {
+fn slash_rename_with_no_args_opens_prompt_no_event() {
+    use raider_tui::SessionEntry;
+
     let mut h = Harness::new(120, 24);
-    pin_dummy_model(&mut h);
+    h.app
+        .sessions
+        .set_sessions(vec![SessionEntry::new("s-1", "Old title", "now")]);
+    h.app.sessions.set_current(Some("s-1".into()));
     h.clear_events();
     h.dispatch(Action::View(ViewAction::Command("rename".into())));
     let any = h
@@ -401,10 +459,33 @@ fn slash_rename_with_no_args_emits_usage_hint_no_event() {
         .iter()
         .any(|ev| matches!(ev, Event::Command { name, .. } if name == "rename"));
     assert!(!any, "no-arg /rename must NOT fire the host event");
-    let snap = h.snapshot();
-    assert!(
-        snap.to_lowercase().contains("usage"),
-        "no-arg /rename must surface a usage hint; snap:\n{snap}",
+    let dialog = h.app.dialogs.dialog.as_ref().expect("rename prompt open");
+    assert_eq!(dialog.kind(), DialogKind::SessionRename);
+    assert_eq!(dialog.filter, "Old title");
+}
+
+#[test]
+fn rename_prompt_submit_emits_explicit_session_event() {
+    use raider_tui::SessionEntry;
+
+    let mut h = Harness::new(120, 24);
+    h.app
+        .sessions
+        .set_sessions(vec![SessionEntry::new("s-1", "Old title", "now")]);
+    h.app.sessions.set_current(Some("s-1".into()));
+    h.dispatch(Action::View(ViewAction::OpenSessionRename(None)));
+    h.clear_events();
+
+    h.dispatch(key('!'));
+    h.dispatch(special(KeyCode::Enter));
+
+    assert!(h.app.dialogs.dialog.is_none());
+    assert_eq!(
+        h.events(),
+        &[Event::RenameSession {
+            session_id: "s-1".to_string(),
+            title: "Old title!".to_string()
+        }]
     );
 }
 

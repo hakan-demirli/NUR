@@ -86,6 +86,11 @@ pub enum Event {
         message_id: Option<String>,
     },
 
+    RenameSession {
+        session_id: String,
+        title: String,
+    },
+
     DeleteSession {
         session_id: String,
     },

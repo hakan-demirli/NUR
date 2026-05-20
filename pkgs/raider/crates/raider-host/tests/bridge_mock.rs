@@ -1424,6 +1424,46 @@ async fn rename_command_dispatches_session_rename() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn explicit_rename_event_dispatches_selected_session_rename() {
+    let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<StreamItem>();
+    let backend = empty_backend_with_events(event_rx);
+
+    let handle = Runtime::spawn(
+        Arc::clone(&backend),
+        RuntimeConfig {
+            initial_session: Some(SessionId::new("ses-active")),
+            disconnect_warning_threshold: 100,
+            workspace_directory: None,
+            lua_plugin_paths: Vec::new(),
+        },
+    );
+
+    let _ = drain_for(&handle, 5, Duration::from_millis(200)).await;
+    handle
+        .ui_events
+        .send(raider_tui::Event::RenameSession {
+            session_id: "ses-selected".into(),
+            title: "selected title".into(),
+        })
+        .expect("ui_events send");
+    let _ = drain_for(&handle, 10, Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let calls = backend.rename_calls.lock().expect("mutex");
+    assert_eq!(
+        calls.len(),
+        1,
+        "expected one session.rename call; got {:?}",
+        *calls,
+    );
+    assert_eq!(calls[0].0.as_str(), "ses-selected");
+    assert_eq!(calls[0].1, "selected title");
+
+    let mut handle = handle;
+    handle.shutdown();
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn new_command_resets_active_session_and_transcript() {
     let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<StreamItem>();
     let backend = empty_backend_with_events(event_rx);

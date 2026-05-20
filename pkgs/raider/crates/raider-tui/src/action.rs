@@ -292,6 +292,7 @@ pub enum ViewAction {
     OpenModelPicker,
     OpenVariantPicker,
     OpenSessionPicker,
+    OpenSessionRename(Option<String>),
     OpenMessageActions(String),
     OpenForkPicker,
     CloseDialog,

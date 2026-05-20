@@ -67,6 +67,46 @@ fn session_picker_enter_emits_switch_event() {
 }
 
 #[test]
+fn session_picker_ctrl_r_renames_selected_without_switching() {
+    use raider_tui::SessionEntry;
+
+    let mut h = Harness::new(120, 30);
+    h.app.sessions.set_sessions(vec![
+        SessionEntry::new("s-1", "First", "9:44 PM"),
+        SessionEntry::new("s-2", "Second", "6:23 PM"),
+    ]);
+    h.app.sessions.set_current(Some("s-2".into()));
+
+    h.dispatch(Action::View(ViewAction::OpenSessionPicker));
+    h.dispatch(special(KeyCode::Up));
+    h.dispatch(ctrl('r'));
+
+    assert_eq!(h.app.sessions.sessions.current.as_deref(), Some("s-2"));
+    assert!(
+        h.app.input.input.is_empty(),
+        "main prompt must stay untouched"
+    );
+    let dialog = h.app.dialogs.dialog.as_ref().expect("rename prompt open");
+    assert_eq!(dialog.kind(), DialogKind::SessionRename);
+    assert_eq!(dialog.filter, "First");
+    match &dialog.payload {
+        DialogPayload::SessionRename { session_id, .. } => assert_eq!(session_id, "s-1"),
+        other => panic!("expected SessionRename payload, got {other:?}"),
+    }
+
+    h.clear_events();
+    h.dispatch(key('!'));
+    h.dispatch(special(KeyCode::Enter));
+    assert_eq!(
+        h.events(),
+        &[Event::RenameSession {
+            session_id: "s-1".to_string(),
+            title: "First!".to_string()
+        }]
+    );
+}
+
+#[test]
 fn switching_back_restores_cached_transcript_immediately() {
     use raider_tui::{HostMessage, SessionEntry};
 

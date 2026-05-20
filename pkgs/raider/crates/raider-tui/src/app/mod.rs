@@ -184,6 +184,7 @@ impl App {
             ViewAction::OpenModelPicker => self.open_model_picker(),
             ViewAction::OpenVariantPicker => self.open_variant_picker(),
             ViewAction::OpenSessionPicker => self.open_session_picker(),
+            ViewAction::OpenSessionRename(session_id) => self.open_session_rename(session_id),
             ViewAction::OpenMessageActions(id) => self.open_message_actions(id),
             ViewAction::OpenForkPicker => self.open_fork_picker(),
             ViewAction::CloseDialog => self.close_dialog(false),
@@ -1202,6 +1203,34 @@ impl App {
             Some(Dialog::new("Sessions", payload, options, parser).with_actions(actions));
     }
 
+    fn open_session_rename(&mut self, session_id: Option<String>) {
+        let Some(id) = session_id.or_else(|| self.sessions.sessions.current.clone()) else {
+            self.dialogs.show_toast(Toast::new(
+                "No active session to rename.",
+                ToastVariant::Error,
+            ));
+            return;
+        };
+        let title = self
+            .sessions
+            .sessions
+            .get(&id)
+            .map(|s| s.title.clone())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| id.clone());
+        let payload = DialogPayload::SessionRename {
+            session_id: id.clone(),
+            title,
+        };
+        let parser_id = id.clone();
+        let parser: Box<dyn Fn(&str) -> DialogPayload + Send + Sync> =
+            Box::new(move |v: &str| DialogPayload::SessionRename {
+                session_id: parser_id.clone(),
+                title: v.to_string(),
+            });
+        self.dialogs.dialog = Some(Dialog::prompt("Rename Session", payload, parser));
+    }
+
     pub fn open_fork_picker(&mut self) {
         if self.sessions.sessions.current.is_none() {
             self.push_system_message("No active session to fork.".to_string());
@@ -1375,6 +1404,7 @@ impl App {
             | DialogPayload::ModelPicker { .. }
             | DialogPayload::VariantPicker { .. }
             | DialogPayload::SessionPicker { .. }
+            | DialogPayload::SessionRename { .. }
             | DialogPayload::AgentPicker { .. }
             | DialogPayload::PluginAlert { .. }
             | DialogPayload::MessageActions { .. }
@@ -1417,6 +1447,18 @@ impl App {
             DialogPayload::SessionPicker { current } => {
                 if let Some(id) = current {
                     self.switch_session(id);
+                }
+            }
+            DialogPayload::SessionRename { session_id, title } => {
+                let title = title.trim().to_string();
+                if title.is_empty() {
+                    self.dialogs.show_toast(Toast::new(
+                        "Session title cannot be empty",
+                        ToastVariant::Error,
+                    ));
+                } else {
+                    self.runtime
+                        .push(Event::RenameSession { session_id, title });
                 }
             }
             DialogPayload::AgentPicker { current } => {
@@ -1668,11 +1710,8 @@ impl App {
             return;
         }
         let id = opt.value.clone();
-        self.dialogs.dialog = None;
         self.sessions.session_delete_armed = None;
-        self.switch_session(id);
-        self.input.input = "/rename ".to_string();
-        self.input.cursor_position = self.input.input.len();
+        self.open_session_rename(Some(id));
     }
 
     pub fn handle_key(&mut self, code: KeyCode, mods: KeyModifiers) {
@@ -1700,6 +1739,11 @@ impl App {
 
         if matches!(code, KeyCode::Char('p')) && mods.contains(KeyModifiers::CONTROL) {
             self.open_command_palette();
+            return;
+        }
+
+        if matches!(code, KeyCode::Char('r')) && mods.contains(KeyModifiers::CONTROL) {
+            self.open_session_rename(None);
             return;
         }
 

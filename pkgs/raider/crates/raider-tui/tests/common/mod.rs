@@ -7,6 +7,7 @@ pub use raider_tui::action::{
     Action, HostAction, Lifecycle, PluginCommand, PluginDialogOption, Toast, ToastVariant,
     UserAction, ViewAction,
 };
+pub use raider_tui::dialog::{DialogKind, DialogPayload};
 pub use raider_tui::event::Event;
 pub use raider_tui::harness::Harness;
 pub use raider_tui::provider::{ModelCatalog, ModelInfo, ModelRef, ProviderInfo};

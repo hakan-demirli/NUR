@@ -13,6 +13,7 @@ pub enum DialogKind {
     ModelPicker,
     VariantPicker,
     SessionPicker,
+    SessionRename,
     PluginSelect,
     PluginAlert,
     MessageActions,
@@ -39,6 +40,10 @@ pub enum DialogPayload {
     SessionPicker {
         current: Option<String>,
     },
+    SessionRename {
+        session_id: String,
+        title: String,
+    },
     PluginSelect {
         callback_id: u64,
         current: Option<String>,
@@ -63,6 +68,7 @@ impl DialogPayload {
             Self::ModelPicker { .. } => DialogKind::ModelPicker,
             Self::VariantPicker { .. } => DialogKind::VariantPicker,
             Self::SessionPicker { .. } => DialogKind::SessionPicker,
+            Self::SessionRename { .. } => DialogKind::SessionRename,
             Self::PluginSelect { .. } => DialogKind::PluginSelect,
             Self::PluginAlert { .. } => DialogKind::PluginAlert,
             Self::MessageActions { .. } => DialogKind::MessageActions,
@@ -78,6 +84,7 @@ impl DialogPayload {
             Self::ModelPicker { current } => current.as_ref().map(|m| m.wire()).unwrap_or_default(),
             Self::VariantPicker { current } => current.clone().unwrap_or_default(),
             Self::SessionPicker { current } => current.clone().unwrap_or_default(),
+            Self::SessionRename { title, .. } => title.clone(),
             Self::PluginSelect { current, .. } => current.clone().unwrap_or_default(),
             Self::PluginAlert { .. } => String::new(),
             Self::MessageActions { .. } => String::new(),
@@ -185,11 +192,42 @@ impl Dialog {
         d
     }
 
+    pub fn prompt(
+        title: impl Into<String>,
+        payload: DialogPayload,
+        parser: SelectionParser,
+    ) -> Self {
+        let initial_value = payload.current_value();
+        Self {
+            title: title.into(),
+            filter: initial_value.clone(),
+            filter_cursor_position: initial_value.len(),
+            payload,
+            current_value: initial_value.clone(),
+            initial_value,
+            options: Vec::new(),
+            filtered: Vec::new(),
+            matcher: SkimMatcherV2::default(),
+            parser,
+            list_state: ListState::default(),
+            actions: Vec::new(),
+        }
+    }
+
     pub fn kind(&self) -> DialogKind {
         self.payload.kind()
     }
 
     fn set_selection(&mut self, value: String) {
+        self.payload = (self.parser)(&value);
+        self.current_value = value;
+    }
+
+    fn sync_prompt_value(&mut self) {
+        if !matches!(self.payload.kind(), DialogKind::SessionRename) {
+            return;
+        }
+        let value = self.filter.clone();
         self.payload = (self.parser)(&value);
         self.current_value = value;
     }
@@ -271,6 +309,10 @@ impl Dialog {
         self.clamp_filter_cursor();
         self.filter.insert(self.filter_cursor_position, c);
         self.filter_cursor_position += c.len_utf8();
+        if self.kind() == DialogKind::SessionRename {
+            self.sync_prompt_value();
+            return;
+        }
         self.refilter();
     }
 
@@ -283,6 +325,10 @@ impl Dialog {
         if self.filter_cursor_position < self.filter.len() {
             self.filter.remove(self.filter_cursor_position);
         }
+        if self.kind() == DialogKind::SessionRename {
+            self.sync_prompt_value();
+            return;
+        }
         self.refilter();
     }
 
@@ -292,6 +338,10 @@ impl Dialog {
             return;
         }
         self.filter.remove(self.filter_cursor_position);
+        if self.kind() == DialogKind::SessionRename {
+            self.sync_prompt_value();
+            return;
+        }
         self.refilter();
     }
 

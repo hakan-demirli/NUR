@@ -57,6 +57,7 @@ impl SlashCommand {
             "sidebar" => Self::action(ViewAction::ToggleSidebar),
             "sessions" if args.is_empty() => Self::action(ViewAction::OpenSessionPicker),
             "sessions" => Self::action(ViewAction::SwitchSession(args.to_string())),
+            "rename" if args.is_empty() => Self::action(ViewAction::OpenSessionRename(None)),
             "timestamps" | "toggle-timestamps" => Self::action(ViewAction::ToggleTimestamps),
             "copy" => Self::action(ViewAction::CopySessionTranscript),
             "export" => Self::action(ViewAction::ExportSession),

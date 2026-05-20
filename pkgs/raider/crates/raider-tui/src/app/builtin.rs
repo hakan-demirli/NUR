@@ -169,7 +169,7 @@ pub fn builtin_commands() -> Vec<Command> {
             name: "session.rename".into(),
             title: "Rename session".into(),
             slash_name: Some("rename".into()),
-            action: cmd("rename"),
+            action: view(ViewAction::OpenSessionRename(None)),
         },
         Command {
             name: "session.fork".into(),
