@@ -289,6 +289,9 @@ impl App {
             HostAction::SetLastAssistantError(err) => {
                 let _ = self.messages.set_last_assistant_error(err);
             }
+            HostAction::MarkAssistantInterrupted { message_id } => {
+                self.messages.mark_assistant_interrupted(&message_id);
+            }
             HostAction::UpsertSession(entry) => self.sessions.upsert_session(entry),
             HostAction::RemoveSession(id) => {
                 self.sessions.remove_session(&id);

@@ -92,6 +92,7 @@ impl MessageStore {
             timestamp: ts,
             is_streaming: m.is_streaming,
             thoughts_collapsed: self.thinking_hidden && matches!(m.sender, Sender::Assistant),
+            interrupted: m.interrupted,
             agent: m.agent,
             model: m.model,
             provider_id: m.provider_id,
@@ -425,6 +426,21 @@ impl MessageStore {
         msg.error = Some(error);
         msg.invalidate_render_cache();
         true
+    }
+
+    pub fn mark_assistant_interrupted(&mut self, server_id: &str) -> bool {
+        if let Some(msg) = self
+            .messages
+            .iter_mut()
+            .find(|m| m.sender == Sender::Assistant && m.server_id.as_deref() == Some(server_id))
+        {
+            msg.interrupted = true;
+            msg.error = None;
+            msg.invalidate_render_cache();
+            true
+        } else {
+            false
+        }
     }
 
     pub fn update_last_assistant_meta(

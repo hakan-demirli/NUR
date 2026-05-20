@@ -881,3 +881,128 @@ fn set_last_assistant_error_is_idempotent_does_not_duplicate() {
         "applying the same error twice must not duplicate; snap:\n{snap}",
     );
 }
+
+#[test]
+fn interrupted_assistant_footer_shows_interrupted_suffix_with_model_and_agent() {
+    use raider_tui::HostMessage;
+    let mut h = Harness::new(140, 30);
+    h.dispatch(Action::Host(HostAction::AppendMessage(
+        HostMessage::assistant("partial response", "")
+            .with_agent("plan")
+            .with_model("Claude Opus 4.7")
+            .with_duration(std::time::Duration::from_millis(2_300))
+            .with_interrupted(true),
+    )));
+    h.draw();
+    let snap = h.snapshot();
+    assert!(
+        snap.contains("interrupted"),
+        "interrupted footer must surface ` · interrupted`; snap:\n{snap}",
+    );
+    assert!(
+        snap.contains("Plan"),
+        "interrupted footer must still show the agent (`Plan`); snap:\n{snap}",
+    );
+    assert!(
+        snap.contains("Claude Opus 4.7"),
+        "interrupted footer must still show the model name; snap:\n{snap}",
+    );
+}
+
+#[test]
+fn interrupted_assistant_does_not_render_red_aborted_panel() {
+    use raider_tui::HostMessage;
+    let mut h = Harness::new(140, 30);
+    h.dispatch(Action::Host(HostAction::AppendMessage(
+        HostMessage::assistant("partial", "")
+            .with_agent("plan")
+            .with_model("Claude Opus 4.7")
+            .with_interrupted(true)
+            .with_error("Aborted"),
+    )));
+    h.draw();
+    let snap = h.snapshot();
+    assert!(
+        !snap.contains("Aborted"),
+        "interrupted assistant must not render the literal `Aborted` (red panel); snap:\n{snap}",
+    );
+    assert!(
+        snap.contains("interrupted"),
+        "footer must still show the interrupted suffix; snap:\n{snap}",
+    );
+}
+
+#[test]
+fn interrupted_non_last_assistant_still_renders_footer() {
+    use raider_tui::HostMessage;
+    let mut h = Harness::new(140, 40);
+    h.dispatch(Action::Host(HostAction::AppendMessage(
+        HostMessage::assistant("first try", "")
+            .with_agent("plan")
+            .with_model("Claude Opus 4.7")
+            .with_duration(std::time::Duration::from_millis(1_500))
+            .with_interrupted(true),
+    )));
+    h.dispatch(Action::Host(HostAction::AppendMessage(HostMessage::user(
+        "you are not on l02",
+    ))));
+    h.dispatch(Action::Host(HostAction::AppendMessage(
+        HostMessage::assistant("second try", "")
+            .with_agent("build")
+            .with_model("Claude Sonnet 4.5")
+            .with_duration(std::time::Duration::from_millis(900)),
+    )));
+    h.draw();
+    let snap = h.snapshot();
+    let occurrences = snap.matches("interrupted").count();
+    assert_eq!(
+        occurrences, 1,
+        "the older interrupted assistant must still render its footer with ` · interrupted`; \
+         snap:\n{snap}",
+    );
+    assert!(
+        snap.contains("Claude Opus 4.7"),
+        "older interrupted assistant footer must persist; snap:\n{snap}",
+    );
+    assert!(
+        snap.contains("Claude Sonnet 4.5"),
+        "last assistant footer must also render; snap:\n{snap}",
+    );
+}
+
+#[test]
+fn mark_assistant_interrupted_action_clears_error_and_sets_flag() {
+    use raider_tui::HostMessage;
+    let mut h = Harness::new(140, 30);
+    h.dispatch(Action::Host(HostAction::AppendMessage(
+        HostMessage::assistant("partial", "")
+            .with_agent("plan")
+            .with_model("Claude Opus 4.7")
+            .with_server_id("m-abort")
+            .with_error("legacy abort text"),
+    )));
+    h.dispatch(Action::Host(HostAction::MarkAssistantInterrupted {
+        message_id: "m-abort".to_string(),
+    }));
+    let target = h
+        .app
+        .messages
+        .iter()
+        .find(|m| m.server_id.as_deref() == Some("m-abort"))
+        .expect("message present");
+    assert!(target.interrupted, "interrupted flag must be set");
+    assert!(
+        target.error.is_none(),
+        "legacy error string must be cleared so the renderer doesn't draw both",
+    );
+    h.draw();
+    let snap = h.snapshot();
+    assert!(
+        !snap.contains("legacy abort text"),
+        "cleared error must not render after MarkAssistantInterrupted; snap:\n{snap}",
+    );
+    assert!(
+        snap.contains("interrupted"),
+        "footer must show ` · interrupted` after the mark action; snap:\n{snap}",
+    );
+}

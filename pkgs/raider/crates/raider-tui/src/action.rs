@@ -104,6 +104,7 @@ pub struct HostMessage {
     pub provider_id: Option<String>,
     pub duration: Option<std::time::Duration>,
     pub error: Option<String>,
+    pub interrupted: bool,
     pub tool_calls: Vec<ToolCall>,
     pub parts: Vec<HostMessagePart>,
     pub compaction: Option<crate::model::CompactionMarker>,
@@ -123,6 +124,7 @@ impl HostMessage {
             provider_id: None,
             duration: None,
             error: None,
+            interrupted: false,
             tool_calls: Vec::new(),
             parts: Vec::new(),
             compaction: None,
@@ -142,6 +144,7 @@ impl HostMessage {
             provider_id: None,
             duration: None,
             error: None,
+            interrupted: false,
             tool_calls: Vec::new(),
             parts: Vec::new(),
             compaction: None,
@@ -161,6 +164,7 @@ impl HostMessage {
             provider_id: None,
             duration: None,
             error: None,
+            interrupted: false,
             tool_calls: Vec::new(),
             parts: Vec::new(),
             compaction: None,
@@ -199,6 +203,11 @@ impl HostMessage {
 
     pub fn with_error(mut self, error: impl Into<String>) -> Self {
         self.error = Some(error.into());
+        self
+    }
+
+    pub fn with_interrupted(mut self, interrupted: bool) -> Self {
+        self.interrupted = interrupted;
         self
     }
 }
@@ -354,6 +363,9 @@ pub enum HostAction {
         duration: Option<std::time::Duration>,
     },
     SetLastAssistantError(String),
+    MarkAssistantInterrupted {
+        message_id: String,
+    },
     BindLastUserMessage {
         server_id: String,
         agent: Option<String>,

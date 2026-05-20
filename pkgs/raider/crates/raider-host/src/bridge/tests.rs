@@ -2768,6 +2768,155 @@ fn session_error_message_aborted_is_silently_swallowed() {
 }
 
 #[test]
+fn message_to_host_routes_abort_error_to_interrupted_flag_not_error_string() {
+    use raider_opencode::types::common::MessageId;
+    use raider_opencode::types::message::{Message as OcMessage, MessageRole, MessageTime};
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "error".to_string(),
+        serde_json::json!({
+            "name": "MessageAbortedError",
+            "data": { "message": "Aborted" },
+        }),
+    );
+    let m = raider_opencode::types::message::MessageWithParts {
+        info: OcMessage {
+            id: MessageId::new("msg-1"),
+            session_id: Some(raider_opencode::types::common::SessionId::new("ses-1")),
+            role: MessageRole::Assistant,
+            time: MessageTime {
+                created: Some(0),
+                completed: Some(100),
+            },
+            extra,
+        },
+        parts: Vec::new(),
+    };
+    let host = super::message_map::message_to_host(&m);
+    assert!(
+        host.interrupted,
+        "MessageAbortedError must surface via the dedicated `interrupted` flag",
+    );
+    assert!(
+        host.error.is_none(),
+        "MessageAbortedError must NOT leak into the legacy `error` string (so the renderer skips the red panel); got: {:?}",
+        host.error,
+    );
+}
+
+#[test]
+fn message_to_host_keeps_non_abort_error_as_error_string() {
+    use raider_opencode::types::common::MessageId;
+    use raider_opencode::types::message::{Message as OcMessage, MessageRole, MessageTime};
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "error".to_string(),
+        serde_json::json!({
+            "name": "APIError",
+            "data": { "message": "rate limited" },
+        }),
+    );
+    let m = raider_opencode::types::message::MessageWithParts {
+        info: OcMessage {
+            id: MessageId::new("msg-1"),
+            session_id: Some(raider_opencode::types::common::SessionId::new("ses-1")),
+            role: MessageRole::Assistant,
+            time: MessageTime {
+                created: Some(0),
+                completed: Some(100),
+            },
+            extra,
+        },
+        parts: Vec::new(),
+    };
+    let host = super::message_map::message_to_host(&m);
+    assert!(
+        !host.interrupted,
+        "non-abort errors must not set `interrupted`",
+    );
+    assert_eq!(host.error.as_deref(), Some("rate limited"));
+}
+
+#[test]
+fn message_updated_completed_with_abort_error_emits_mark_interrupted() {
+    use raider_opencode::events::{MessageUpdatedProps, ServerEvent};
+    use raider_opencode::types::common::MessageId;
+    use raider_opencode::types::message::{Message as OcMessage, MessageRole, MessageTime};
+
+    let active = SessionId::new("ses-a");
+    let mut mirror = super::PartMirror::new();
+
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "error".to_string(),
+        serde_json::json!({ "name": "MessageAbortedError" }),
+    );
+    let ev = ServerEvent::MessageUpdated(MessageUpdatedProps {
+        info: raider_opencode::types::message::MessageWithParts {
+            info: OcMessage {
+                id: MessageId::new("m-aborted"),
+                session_id: Some(active.clone()),
+                role: MessageRole::Assistant,
+                time: MessageTime {
+                    created: Some(0),
+                    completed: Some(50),
+                },
+                extra,
+            },
+            parts: Vec::new(),
+        },
+    });
+    let t = super::translate(ev, Some(&active), &mut mirror);
+
+    let mark = t.actions.iter().find_map(|a| match a {
+        raider_tui::action::Action::Host(HostAction::MarkAssistantInterrupted { message_id }) => {
+            Some(message_id.clone())
+        }
+        _ => None,
+    });
+    assert_eq!(
+        mark.as_deref(),
+        Some("m-aborted"),
+        "MessageUpdated(completed) with MessageAbortedError must emit MarkAssistantInterrupted targeting that message; actions={:#?}",
+        t.actions,
+    );
+}
+
+#[test]
+fn message_updated_completed_without_error_does_not_emit_mark_interrupted() {
+    use raider_opencode::events::{MessageUpdatedProps, ServerEvent};
+    use raider_opencode::types::common::MessageId;
+    use raider_opencode::types::message::{Message as OcMessage, MessageRole, MessageTime};
+
+    let active = SessionId::new("ses-a");
+    let mut mirror = super::PartMirror::new();
+    let ev = ServerEvent::MessageUpdated(MessageUpdatedProps {
+        info: raider_opencode::types::message::MessageWithParts {
+            info: OcMessage {
+                id: MessageId::new("m-clean"),
+                session_id: Some(active.clone()),
+                role: MessageRole::Assistant,
+                time: MessageTime {
+                    created: Some(0),
+                    completed: Some(50),
+                },
+                extra: serde_json::Map::new(),
+            },
+            parts: Vec::new(),
+        },
+    });
+    let t = super::translate(ev, Some(&active), &mut mirror);
+    assert!(
+        !t.actions.iter().any(|a| matches!(
+            a,
+            raider_tui::action::Action::Host(HostAction::MarkAssistantInterrupted { .. })
+        )),
+        "no MarkAssistantInterrupted on a clean completion; actions={:#?}",
+        t.actions,
+    );
+}
+
+#[test]
 fn session_error_for_inactive_session_is_ignored() {
     use raider_opencode::events::{ServerEvent, SessionErrorProps};
     let active = SessionId::new("ses-active");

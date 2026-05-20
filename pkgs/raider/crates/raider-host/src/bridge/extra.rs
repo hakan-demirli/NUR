@@ -19,13 +19,6 @@ pub(crate) fn extract_agent(extra: &serde_json::Map<String, serde_json::Value>) 
         .map(|s| s.to_string())
 }
 
-pub(crate) fn extract_assistant_error(
-    extra: &serde_json::Map<String, serde_json::Value>,
-) -> Option<String> {
-    let raw = extra.get("error")?;
-    unwrap_error_message(raw)
-}
-
 pub(crate) fn unwrap_error_message(raw: &serde_json::Value) -> Option<String> {
     if raw.is_null() {
         return None;

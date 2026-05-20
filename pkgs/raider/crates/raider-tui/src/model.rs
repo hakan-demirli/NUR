@@ -34,6 +34,9 @@ pub struct Message {
     pub thoughts_collapsed: bool,
 
     #[serde(default)]
+    pub interrupted: bool,
+
+    #[serde(default)]
     pub agent: Option<String>,
 
     #[serde(default)]
@@ -147,6 +150,7 @@ impl Default for Message {
             timestamp: String::new(),
             is_streaming: false,
             thoughts_collapsed: false,
+            interrupted: false,
             agent: None,
             model: None,
             provider_id: None,

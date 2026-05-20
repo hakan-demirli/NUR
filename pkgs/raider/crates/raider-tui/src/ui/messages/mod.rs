@@ -576,7 +576,7 @@ pub(crate) fn render_messages(f: &mut Frame, app: &mut App, area: Rect) {
             }
         }
 
-        if msg.sender == Sender::Assistant {
+        if msg.sender == Sender::Assistant && !msg.interrupted {
             if let Some(err) = msg.error.as_deref() {
                 if !err.is_empty() {
                     margin_top(&mut items);
@@ -679,7 +679,7 @@ pub(crate) fn render_messages(f: &mut Frame, app: &mut App, area: Rect) {
             }
         }
 
-        if msg.sender == Sender::Assistant && is_last_assistant {
+        if msg.sender == Sender::Assistant && (is_last_assistant || msg.interrupted) {
             margin_top(&mut items);
             items.push(ListItem::new(vec![assistant_footer_line(
                 msg,

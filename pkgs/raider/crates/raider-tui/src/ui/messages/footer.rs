@@ -15,11 +15,14 @@ pub(crate) fn assistant_footer_line<'a>(
 ) -> Line<'a> {
     let mut spans: Vec<Span<'a>> = vec![Span::styled("   ", Style::default().bg(bg_color))];
 
-    let marker_color = msg
-        .agent
-        .as_deref()
-        .map(|a| agent_color(theme, agents, a))
-        .unwrap_or_else(|| agent_color_by_index(theme, 0));
+    let marker_color = if msg.interrupted {
+        theme.text_muted
+    } else {
+        msg.agent
+            .as_deref()
+            .map(|a| agent_color(theme, agents, a))
+            .unwrap_or_else(|| agent_color_by_index(theme, 0))
+    };
     spans.push(Span::styled(
         "▣  ",
         Style::default().fg(marker_color).bg(bg_color),
@@ -52,6 +55,17 @@ pub(crate) fn assistant_footer_line<'a>(
         spans.push(Span::styled(
             crate::model::format_duration(d),
             text_style.add_modifier(Modifier::DIM),
+        ));
+    }
+
+    if msg.interrupted {
+        spans.push(Span::styled(
+            " · ",
+            Style::default().fg(theme.text_muted).bg(bg_color),
+        ));
+        spans.push(Span::styled(
+            "interrupted",
+            Style::default().fg(theme.text_muted).bg(bg_color),
         ));
     }
 

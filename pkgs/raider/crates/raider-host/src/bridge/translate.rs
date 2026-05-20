@@ -146,6 +146,13 @@ pub fn translate(
                             duration,
                         }));
                     }
+                    if let Some(raw) = info.info.extra.get("error") {
+                        if is_message_aborted_error(raw) {
+                            out.push(Action::Host(HostAction::MarkAssistantInterrupted {
+                                message_id: info.info.id.as_str().to_string(),
+                            }));
+                        }
+                    }
                     if let Some(session_id) = info.info.session_id.as_ref() {
                         out.push(Action::Host(HostAction::SetSessionStatus {
                             session_id: session_id.as_str().to_string(),

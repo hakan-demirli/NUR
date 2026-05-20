@@ -2,7 +2,8 @@ use raider_opencode::types::message::{MessagePart, MessageRole, MessageWithParts
 use raider_tui::{Action, HostAction, HostMessage, HostMessagePart, Sender, ToolCall};
 
 use super::extra::{
-    extract_agent, extract_assistant_error, extract_model_display, extract_provider,
+    extract_agent, extract_model_display, extract_provider, is_message_aborted_error,
+    unwrap_error_message,
 };
 use super::tool::tool_part_to_call;
 
@@ -44,7 +45,11 @@ pub fn message_to_host(m: &MessageWithParts) -> HostMessage {
     let agent = extract_agent(&m.info.extra);
     let model = extract_model_display(&m.info.extra);
     let provider_id = extract_provider(&m.info.extra);
-    let error = extract_assistant_error(&m.info.extra);
+    let (error, interrupted) = match m.info.extra.get("error") {
+        Some(raw) if is_message_aborted_error(raw) => (None, true),
+        Some(raw) => (unwrap_error_message(raw), false),
+        None => (None, false),
+    };
     let duration = match (m.info.time.created, m.info.time.completed) {
         (Some(start), Some(end)) if end >= start => {
             Some(std::time::Duration::from_millis((end - start) as u64))
@@ -64,6 +69,7 @@ pub fn message_to_host(m: &MessageWithParts) -> HostMessage {
         provider_id,
         duration,
         error,
+        interrupted,
         tool_calls,
         parts,
         compaction,
