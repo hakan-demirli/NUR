@@ -259,6 +259,9 @@ impl App {
             HostAction::ClearPluginDialog => self.clear_plugin_dialog(),
             HostAction::SetCurrentSession(id) => self.host_set_current_session(id),
             HostAction::ReplaceMessages(msgs) => self.host_replace_messages(msgs),
+            HostAction::BindLastUserMessage { server_id, agent } => {
+                self.messages.bind_first_untagged_user(server_id, agent);
+            }
             HostAction::AppendMessage(msg) => self.host_append_message(msg),
             HostAction::UpsertToolCall(tool) => {
                 self.messages.upsert_tool_call(*tool);

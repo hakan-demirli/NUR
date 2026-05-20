@@ -620,6 +620,81 @@ fn confirming_fork_picker_user_message_emits_fork_with_message_id() {
 }
 
 #[test]
+fn fork_picker_includes_locally_submitted_user_message_after_bind() {
+    use raider_tui::dialog::DialogKind;
+    let mut h = Harness::new(140, 30);
+    pin_dummy_model(&mut h);
+    seed_fork_session(&mut h);
+
+    type_text(&mut h, "draft me a plan");
+    h.dispatch(Action::User(UserAction::SubmitInput));
+    h.dispatch(Action::Host(HostAction::BindLastUserMessage {
+        server_id: "msg-plan-1".into(),
+        agent: Some("plan".into()),
+    }));
+
+    h.dispatch(Action::View(ViewAction::OpenForkPicker));
+    assert_eq!(h.app.dialog_kind(), Some(DialogKind::ForkPicker));
+    let visible = h
+        .app
+        .dialogs
+        .dialog
+        .as_ref()
+        .expect("dialog open")
+        .visible_options();
+    let labels: Vec<&str> = visible.iter().map(|o| o.title.as_str()).collect();
+    assert!(
+        labels.contains(&"draft me a plan"),
+        "fork picker must include locally-submitted user message after bind; got: {labels:?}",
+    );
+
+    let bound = h
+        .app
+        .messages
+        .iter()
+        .find(|m| m.server_id.as_deref() == Some("msg-plan-1"))
+        .expect("bound message present");
+    assert_eq!(bound.agent.as_deref(), Some("plan"));
+}
+
+#[test]
+fn bind_last_user_message_targets_oldest_untagged_user_in_fifo_order() {
+    let mut h = Harness::new(140, 30);
+    pin_dummy_model(&mut h);
+    seed_fork_session(&mut h);
+
+    type_text(&mut h, "first plan");
+    h.dispatch(Action::User(UserAction::SubmitInput));
+    type_text(&mut h, "second plan");
+    h.dispatch(Action::User(UserAction::SubmitInput));
+
+    h.dispatch(Action::Host(HostAction::BindLastUserMessage {
+        server_id: "msg-A".into(),
+        agent: Some("plan".into()),
+    }));
+    h.dispatch(Action::Host(HostAction::BindLastUserMessage {
+        server_id: "msg-B".into(),
+        agent: Some("plan".into()),
+    }));
+
+    let users: Vec<(Option<&str>, &str)> = h
+        .app
+        .messages
+        .iter()
+        .filter(|m| m.sender == raider_tui::Sender::User)
+        .map(|m| (m.server_id.as_deref(), m.content.as_str()))
+        .collect();
+    assert_eq!(
+        users,
+        vec![
+            (Some("msg-A"), "first plan"),
+            (Some("msg-B"), "second plan"),
+        ],
+        "binds must consume oldest-untagged-first to match the host's FIFO prompt queue",
+    );
+}
+
+#[test]
 fn opening_fork_picker_without_active_session_pushes_system_message_not_dialog() {
     let mut h = Harness::new(140, 30);
     pin_dummy_model(&mut h);

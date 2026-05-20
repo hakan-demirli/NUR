@@ -127,6 +127,23 @@ impl MessageStore {
         self.messages.push(m);
     }
 
+    pub fn bind_first_untagged_user(&mut self, server_id: String, agent: Option<String>) -> bool {
+        if let Some(msg) = self
+            .messages
+            .iter_mut()
+            .find(|m| m.sender == Sender::User && m.server_id.is_none())
+        {
+            msg.server_id = Some(server_id);
+            if msg.agent.is_none() {
+                msg.agent = agent;
+            }
+            msg.invalidate_render_cache();
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn mark_compaction(
         &mut self,
         message_id: String,

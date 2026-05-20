@@ -94,6 +94,10 @@ pub(super) async fn prompt_task<B: Backend>(ctx: PromptTask<B>) {
         };
 
         let message_id = MessageId::new(ascending(Prefix::Message));
+        let _ = action_tx.send(Action::Host(HostAction::BindLastUserMessage {
+            server_id: message_id.as_str().to_string(),
+            agent: Some(agent.clone()),
+        }));
         let mut parts: Vec<PromptPart> = Vec::with_capacity(1 + req.files.len());
         parts.push(PromptPart::Text(PromptTextPart {
             id: None,

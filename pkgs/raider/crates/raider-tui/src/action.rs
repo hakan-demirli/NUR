@@ -354,6 +354,10 @@ pub enum HostAction {
         duration: Option<std::time::Duration>,
     },
     SetLastAssistantError(String),
+    BindLastUserMessage {
+        server_id: String,
+        agent: Option<String>,
+    },
     AppendMessage(HostMessage),
     UpsertToolCall(Box<ToolCall>),
     UpdateTaskChild {

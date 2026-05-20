@@ -634,10 +634,24 @@ async fn user_message_creates_session_then_submits_prompt() {
         .send(raider_tui::Event::UserMessage("yo".to_string()))
         .unwrap();
 
-    let _ = drain_for(&handle, 20, Duration::from_millis(300)).await;
+    let actions = drain_for(&handle, 20, Duration::from_millis(300)).await;
 
     let creates = backend.create_calls.lock().unwrap().clone();
     let prompts = backend.prompt_calls.lock().unwrap().clone();
+
+    let bind = actions.iter().find_map(|a| match a {
+        Action::Host(HostAction::BindLastUserMessage { server_id, agent }) => {
+            Some((server_id.clone(), agent.clone()))
+        }
+        _ => None,
+    });
+    let (bind_id, bind_agent) =
+        bind.expect("expected BindLastUserMessage to be emitted before session_prompt");
+    assert_eq!(bind_agent.as_deref(), Some("build"));
+    assert!(
+        !bind_id.is_empty(),
+        "bound server_id must be non-empty (got: {bind_id:?})",
+    );
 
     assert_eq!(
         creates.len(),
@@ -668,6 +682,11 @@ async fn user_message_creates_session_then_submits_prompt() {
     assert!(
         prompt.message_id.is_some(),
         "prompt payload should carry a freshly-minted message id",
+    );
+    assert_eq!(
+        prompt.message_id.as_ref().map(|m| m.as_str().to_string()),
+        Some(bind_id.clone()),
+        "BindLastUserMessage.server_id must match the MessageId sent in the prompt payload",
     );
     assert_eq!(prompt.parts.len(), 1);
     match &prompt.parts[0] {
