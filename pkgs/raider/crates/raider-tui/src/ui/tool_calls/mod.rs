@@ -42,20 +42,17 @@ fn push_wrapped_tool_lines<'a>(
     }
 }
 
-pub(crate) fn tool_is_inline(tool: &ToolCall) -> bool {
-    use crate::action::ToolStatus;
-    let running = matches!(tool.status, ToolStatus::Running | ToolStatus::Pending);
-    let has_block_body = match tool.name.as_str() {
-        "bash" => !tool.output.trim().is_empty(),
-        "edit" => tool.diff.is_some() && !running,
-        "write" => tool.diff.is_some() && !running,
-        "todowrite" => !tool.todos.is_empty() && !running,
-        "apply_patch" => !tool.patches.is_empty(),
-        "question" => !tool.answers.is_empty(),
-        "glob" | "read" | "grep" | "webfetch" | "websearch" | "skill" | "task" => false,
-        _ => !tool.output.trim().is_empty(),
-    };
-    !has_block_body
+pub(crate) fn tool_display_kind(name: &str) -> ToolHeaderKind {
+    match name {
+        "bash" | "edit" | "write" | "apply_patch" | "todowrite" | "question" => {
+            ToolHeaderKind::Block
+        }
+        _ => ToolHeaderKind::Inline,
+    }
+}
+
+pub(crate) fn tool_is_inline(name: &str) -> bool {
+    matches!(tool_display_kind(name), ToolHeaderKind::Inline)
 }
 
 fn title_is_bare(title: &str, tool_name: &str) -> bool {
@@ -234,18 +231,21 @@ pub(crate) fn render_tool_call_v2(
     if tool.name == "apply_patch" && !tool.patches.is_empty() {
         return render_apply_patch_blocks(tool, theme, width, ps, ts, synth_theme);
     }
-    let has_block_body = !tool_is_inline(tool);
-    let (bar_span, gap_span, row_bg) = if has_block_body {
-        let bg = theme.background_panel;
-        let (b, g) = bar_gap1(theme.background, bg);
-        (b, g, bg)
-    } else {
-        let bg = theme.background;
-        (
-            Span::styled("   ", Style::default().bg(bg)),
-            Span::styled("", Style::default().bg(bg)),
-            bg,
-        )
+    let kind = tool_display_kind(&tool.name);
+    let (bar_span, gap_span, row_bg) = match kind {
+        ToolHeaderKind::Block => {
+            let bg = theme.background_panel;
+            let (b, g) = bar_gap1(theme.background, bg);
+            (b, g, bg)
+        }
+        ToolHeaderKind::Inline => {
+            let bg = theme.background;
+            (
+                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled("", Style::default().bg(bg)),
+                bg,
+            )
+        }
     };
     let lines = render_tool_call(
         tool,
@@ -265,8 +265,9 @@ pub(crate) fn render_tool_call_v2(
         ListItem::new(vec![Line::from(vec![bar_span.clone(), gap_span.clone()])]).style(row_style)
     };
 
+    let is_block = matches!(kind, ToolHeaderKind::Block);
     let mut out: Vec<ListItem<'static>> = Vec::with_capacity(lines.len() + 2);
-    if has_block_body {
+    if is_block {
         out.push(pad_item());
     }
     out.extend(
@@ -274,7 +275,7 @@ pub(crate) fn render_tool_call_v2(
             .into_iter()
             .map(|l| ListItem::new(vec![l]).style(row_style)),
     );
-    if has_block_body {
+    if is_block {
         out.push(pad_item());
     }
     out
@@ -286,31 +287,28 @@ pub(crate) fn build_spinner_slot_for(
     _width: usize,
 ) -> Option<ToolHeaderSlot> {
     use crate::action::ToolStatus;
-    let has_block_body = !tool_is_inline(tool);
-    let (bar_str, bar_fg, bar_bg, gap_str, gap_bg, row_bg) = if has_block_body {
-        let bg = theme.background_panel;
-        (
-            "┃".to_string(),
-            theme.background,
-            bg,
-            " ".to_string(),
-            bg,
-            bg,
-        )
-    } else {
-        let bg = theme.background;
-        ("   ".to_string(), bg, bg, String::new(), bg, bg)
+    let kind = tool_display_kind(&tool.name);
+    let (bar_str, bar_fg, bar_bg, gap_str, gap_bg, row_bg) = match kind {
+        ToolHeaderKind::Block => {
+            let bg = theme.background_panel;
+            (
+                "┃".to_string(),
+                theme.background,
+                bg,
+                " ".to_string(),
+                bg,
+                bg,
+            )
+        }
+        ToolHeaderKind::Inline => {
+            let bg = theme.background;
+            ("   ".to_string(), bg, bg, String::new(), bg, bg)
+        }
     };
-    let fg = match tool.status {
+    let body_fg = match tool.status {
         ToolStatus::Error => theme.error,
         ToolStatus::Completed => theme.text_muted,
         _ => theme.text,
-    };
-    let title = tool.title.clone();
-    let kind = if has_block_body {
-        ToolHeaderKind::Block
-    } else {
-        ToolHeaderKind::Inline
     };
     Some(ToolHeaderSlot {
         bar_fg,
@@ -319,9 +317,9 @@ pub(crate) fn build_spinner_slot_for(
         gap_bg,
         bar_str,
         row_bg,
-        body_fg: fg,
+        body_fg,
         title_fg: theme.text,
-        title,
+        title: tool.title.clone(),
         kind,
     })
 }
@@ -597,12 +595,19 @@ fn render_tool_call<'a>(
         icon
     };
 
-    let always_inline = matches!(
+    let suppress_streamed_output = matches!(
         tool.name.as_str(),
-        "glob" | "read" | "grep" | "webfetch" | "websearch" | "skill" | "task" | "question"
+        "todowrite"
+            | "question"
+            | "glob"
+            | "read"
+            | "grep"
+            | "webfetch"
+            | "websearch"
+            | "skill"
+            | "task"
     );
-    let suppress_output = tool.name == "todowrite" || always_inline;
-    let has_output = !suppress_output && !tool.output.trim().is_empty();
+    let has_output = !suppress_streamed_output && !tool.output.trim().is_empty();
     let has_command = !tool
         .command
         .as_deref()

@@ -425,7 +425,7 @@ pub(crate) fn render_messages(f: &mut Frame, app: &mut App, area: Rect) {
                         }
                     }
                     HostMessagePart::Tool(tool) => {
-                        let inline = tool_is_inline(&tool);
+                        let inline = tool_is_inline(&tool.name);
                         if !(prev_was_inline_tool && inline) {
                             margin_top(&mut items);
                         }
@@ -552,7 +552,7 @@ pub(crate) fn render_messages(f: &mut Frame, app: &mut App, area: Rect) {
                     tool_calls.iter().filter_map(|t| t.id.as_deref()).collect();
                 tool_render_cache.retain(|id, _| live_ids.contains(id.as_str()));
                 for tool in tool_calls.iter() {
-                    let inline = tool_is_inline(tool);
+                    let inline = tool_is_inline(&tool.name);
                     if !(prev_was_inline_tool && inline) {
                         margin_top(&mut items);
                     }
