@@ -16,6 +16,8 @@ pub enum DialogKind {
     SessionRename,
     PluginSelect,
     PluginAlert,
+    PluginManager,
+    PluginInstall,
     MessageActions,
     ForkPicker,
 }
@@ -51,12 +53,34 @@ pub enum DialogPayload {
     PluginAlert {
         message: String,
     },
+    PluginManager {
+        current: String,
+    },
+    PluginInstall {
+        path: String,
+        scope: PluginInstallScope,
+    },
     MessageActions {
         message_id: String,
     },
     ForkPicker {
         current: Option<String>,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PluginInstallScope {
+    Global,
+    Local,
+}
+
+impl PluginInstallScope {
+    pub fn label(self) -> &'static str {
+        match self {
+            PluginInstallScope::Global => "global",
+            PluginInstallScope::Local => "local",
+        }
+    }
 }
 
 impl DialogPayload {
@@ -71,6 +95,8 @@ impl DialogPayload {
             Self::SessionRename { .. } => DialogKind::SessionRename,
             Self::PluginSelect { .. } => DialogKind::PluginSelect,
             Self::PluginAlert { .. } => DialogKind::PluginAlert,
+            Self::PluginManager { .. } => DialogKind::PluginManager,
+            Self::PluginInstall { .. } => DialogKind::PluginInstall,
             Self::MessageActions { .. } => DialogKind::MessageActions,
             Self::ForkPicker { .. } => DialogKind::ForkPicker,
         }
@@ -87,6 +113,8 @@ impl DialogPayload {
             Self::SessionRename { title, .. } => title.clone(),
             Self::PluginSelect { current, .. } => current.clone().unwrap_or_default(),
             Self::PluginAlert { .. } => String::new(),
+            Self::PluginManager { current } => current.clone(),
+            Self::PluginInstall { path, .. } => path.clone(),
             Self::MessageActions { .. } => String::new(),
             Self::ForkPicker { current } => current.clone().unwrap_or_default(),
         }
@@ -224,12 +252,29 @@ impl Dialog {
     }
 
     fn sync_prompt_value(&mut self) {
-        if !matches!(self.payload.kind(), DialogKind::SessionRename) {
+        if !self.is_prompt_kind() {
             return;
         }
         let value = self.filter.clone();
-        self.payload = (self.parser)(&value);
+        match &mut self.payload {
+            DialogPayload::SessionRename { title, .. } => {
+                *title = value.clone();
+            }
+            DialogPayload::PluginInstall { path, .. } => {
+                *path = value.clone();
+            }
+            _ => {
+                self.payload = (self.parser)(&value);
+            }
+        }
         self.current_value = value;
+    }
+
+    fn is_prompt_kind(&self) -> bool {
+        matches!(
+            self.payload.kind(),
+            DialogKind::SessionRename | DialogKind::PluginInstall
+        )
     }
 
     fn filtered_position_enabled(&self, filtered_pos: usize) -> bool {
@@ -309,7 +354,7 @@ impl Dialog {
         self.clamp_filter_cursor();
         self.filter.insert(self.filter_cursor_position, c);
         self.filter_cursor_position += c.len_utf8();
-        if self.kind() == DialogKind::SessionRename {
+        if self.is_prompt_kind() {
             self.sync_prompt_value();
             return;
         }
@@ -325,7 +370,7 @@ impl Dialog {
         if self.filter_cursor_position < self.filter.len() {
             self.filter.remove(self.filter_cursor_position);
         }
-        if self.kind() == DialogKind::SessionRename {
+        if self.is_prompt_kind() {
             self.sync_prompt_value();
             return;
         }
@@ -338,7 +383,7 @@ impl Dialog {
             return;
         }
         self.filter.remove(self.filter_cursor_position);
-        if self.kind() == DialogKind::SessionRename {
+        if self.is_prompt_kind() {
             self.sync_prompt_value();
             return;
         }

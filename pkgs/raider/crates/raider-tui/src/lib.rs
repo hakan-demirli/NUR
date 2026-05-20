@@ -16,8 +16,8 @@ pub mod ui;
 
 pub use action::{
     Action, HostAction, HostMessage, HostMessagePart, Lifecycle, PatchFile, PatchKind,
-    PluginCommand, PluginDialogOption, Question, Toast, ToastVariant, ToolCall, ToolStatus,
-    UserAction, ViewAction,
+    PluginCommand, PluginDialogOption, PluginInfo, PluginKind, PluginStatus, Question, Toast,
+    ToastVariant, ToolCall, ToolStatus, UserAction, ViewAction,
 };
 pub use app::{
     Agent, AgentIndex, Agents, App, Clock, Command, DialogState, EmptyAgentsError, FixedClock,

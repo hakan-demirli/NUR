@@ -1,3 +1,4 @@
+use crate::dialog::PluginInstallScope;
 use crate::provider::ModelRef;
 use crate::ui::theme::Mode as ThemeMode;
 
@@ -102,6 +103,15 @@ pub enum Event {
     },
 
     OpenUrl(String),
+
+    TogglePlugin(String),
+
+    ReloadPlugin(String),
+
+    InstallPluginPath {
+        path: String,
+        scope: PluginInstallScope,
+    },
 
     Quit,
 }

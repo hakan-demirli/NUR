@@ -496,6 +496,7 @@ async fn fresh_session_conversation_assistant_reply_reaches_app() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -576,6 +577,7 @@ async fn fresh_session_populates_sidebar_without_transcript_refetch() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 

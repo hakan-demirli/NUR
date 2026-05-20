@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::action::{PluginCommand, Toast};
+use crate::action::{PluginCommand, PluginInfo, Toast};
 use crate::completion::{CompletionManager, SlashEntry};
 use crate::dialog::Dialog;
 
@@ -10,6 +10,7 @@ pub struct DialogState {
     pub dialog: Option<Dialog>,
     pub commands: Vec<Command>,
     pub plugin_commands: Vec<PluginCommand>,
+    pub plugins: Vec<PluginInfo>,
     pub toast: Option<Toast>,
 }
 
@@ -19,6 +20,7 @@ impl DialogState {
             dialog: None,
             commands,
             plugin_commands: Vec::new(),
+            plugins: Vec::new(),
             toast: None,
         }
     }
@@ -55,6 +57,24 @@ impl DialogState {
             }
         }
         changed
+    }
+
+    pub fn unregister_plugin_commands(&mut self, names: &[String]) -> bool {
+        if names.is_empty() {
+            return false;
+        }
+        let before = self.plugin_commands.len();
+        self.plugin_commands
+            .retain(|command| !names.iter().any(|name| name == &command.name));
+        self.plugin_commands.len() != before
+    }
+
+    pub fn set_plugin_list(&mut self, plugins: Vec<PluginInfo>) -> bool {
+        if self.plugins == plugins {
+            return false;
+        }
+        self.plugins = plugins;
+        true
     }
 
     pub fn plugin_command_for_slash(&self, slash: &str) -> Option<&PluginCommand> {

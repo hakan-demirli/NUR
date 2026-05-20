@@ -32,6 +32,7 @@ pub struct RuntimeConfig {
     pub disconnect_warning_threshold: u32,
     pub workspace_directory: Option<String>,
     pub lua_plugin_paths: Vec<PathBuf>,
+    pub disable_plugins: bool,
 }
 
 impl Default for RuntimeConfig {
@@ -41,6 +42,7 @@ impl Default for RuntimeConfig {
             disconnect_warning_threshold: 3,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         }
     }
 }
@@ -97,21 +99,25 @@ impl Runtime {
 
         let mut handles = Vec::new();
 
-        let plugin_handle = raider_plugin_lua::spawn(
-            raider_plugin_lua::LuaPluginConfig {
-                plugin_paths: lua_plugin_paths,
-                workspace_directory: config.workspace_directory.clone(),
-                current_session: config
-                    .initial_session
-                    .as_ref()
-                    .map(|id| id.as_str().to_string()),
-            },
-            action_tx.clone(),
-        )
-        .map(|(handle, task)| {
-            handles.push(task);
-            handle
-        });
+        let plugin_handle = if config.disable_plugins {
+            None
+        } else {
+            raider_plugin_lua::spawn(
+                raider_plugin_lua::LuaPluginConfig {
+                    plugin_paths: lua_plugin_paths,
+                    workspace_directory: config.workspace_directory.clone(),
+                    current_session: config
+                        .initial_session
+                        .as_ref()
+                        .map(|id| id.as_str().to_string()),
+                },
+                action_tx.clone(),
+            )
+            .map(|(handle, task)| {
+                handles.push(task);
+                handle
+            })
+        };
 
         {
             let backend = Arc::clone(&backend);

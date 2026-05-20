@@ -375,6 +375,18 @@ pub fn builtin_commands() -> Vec<Command> {
             slash_name: None,
             action: user(UserAction::ClearInput),
         },
+        Command {
+            name: "plugins.list".into(),
+            title: "Plugins".into(),
+            slash_name: Some("plugins".into()),
+            action: view(ViewAction::OpenPluginManager),
+        },
+        Command {
+            name: "plugins.install".into(),
+            title: "Install plugin".into(),
+            slash_name: Some("plugin-install".into()),
+            action: view(ViewAction::OpenPluginInstallPrompt),
+        },
     ]
 }
 

@@ -231,6 +231,51 @@ pub struct PluginDialogOption {
     pub disabled: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PluginStatus {
+    Active,
+    Inactive,
+    Error(String),
+}
+
+impl PluginStatus {
+    pub fn label(&self) -> &'static str {
+        match self {
+            PluginStatus::Active => "active",
+            PluginStatus::Inactive => "inactive",
+            PluginStatus::Error(_) => "error",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PluginKind {
+    Discovered,
+    Configured,
+    Installed,
+}
+
+impl PluginKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            PluginKind::Discovered => "discovered",
+            PluginKind::Configured => "configured",
+            PluginKind::Installed => "installed",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginInfo {
+    pub id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub version: Option<String>,
+    pub kind: PluginKind,
+    pub source: String,
+    pub status: PluginStatus,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToastVariant {
     Info,
@@ -330,6 +375,12 @@ pub enum ViewAction {
     SubagentGoToParent,
     SubagentCycleSibling(i32),
 
+    OpenPluginManager,
+    OpenPluginInstallPrompt,
+    TogglePlugin(String),
+    ReloadPlugin(String),
+    AddPluginPath(String),
+
     Command(String),
     ShowToast(Toast),
     CopyToClipboard {
@@ -344,6 +395,8 @@ pub enum ViewAction {
 pub enum HostAction {
     SetSessions(Vec<SessionEntry>),
     RegisterPluginCommands(Vec<PluginCommand>),
+    UnregisterPluginCommands(Vec<String>),
+    SetPluginList(Vec<PluginInfo>),
     OpenPluginSelect {
         callback_id: u64,
         title: String,

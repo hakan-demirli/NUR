@@ -35,9 +35,29 @@ pub(crate) fn render_dialog(f: &mut Frame, app: &mut App, screen: Rect) {
             f,
             theme,
             screen,
-            dialog.title.as_str(),
-            dialog.filter.as_str(),
-            dialog.filter_cursor_position,
+            PromptDialog {
+                title: dialog.title.as_str(),
+                value: dialog.filter.as_str(),
+                cursor_position: dialog.filter_cursor_position,
+                placeholder: "Enter text",
+                footer_hint: None,
+            },
+        );
+        return;
+    }
+    if let DialogPayload::PluginInstall { scope, .. } = &dialog.payload {
+        let scope_hint = format!("tab toggles scope · current: {}", scope.label());
+        render_prompt_dialog(
+            f,
+            theme,
+            screen,
+            PromptDialog {
+                title: dialog.title.as_str(),
+                value: dialog.filter.as_str(),
+                cursor_position: dialog.filter_cursor_position,
+                placeholder: "Path to .lua file",
+                footer_hint: Some(scope_hint.as_str()),
+            },
         );
         return;
     }
@@ -275,14 +295,27 @@ fn render_title_row(f: &mut Frame, theme: &crate::ui::theme::Theme, area: Rect, 
     );
 }
 
+struct PromptDialog<'a> {
+    title: &'a str,
+    value: &'a str,
+    cursor_position: usize,
+    placeholder: &'a str,
+    footer_hint: Option<&'a str>,
+}
+
 fn render_prompt_dialog(
     f: &mut Frame,
     theme: &crate::ui::theme::Theme,
     screen: Rect,
-    title: &str,
-    value: &str,
-    cursor_position: usize,
+    prompt: PromptDialog<'_>,
 ) {
+    let PromptDialog {
+        title,
+        value,
+        cursor_position,
+        placeholder,
+        footer_hint,
+    } = prompt;
     let rect = panel(f, screen, theme, 8);
     render_title_row(f, theme, padded_row(rect, 1, 2), title);
 
@@ -294,7 +327,7 @@ fn render_prompt_dialog(
     };
     let input_line = if value.is_empty() {
         Line::from(Span::styled(
-            "Enter text",
+            placeholder.to_string(),
             Style::default()
                 .fg(theme.text_muted)
                 .bg(theme.background_panel),
@@ -318,20 +351,32 @@ fn render_prompt_dialog(
     f.set_cursor_position(Position::new(cursor_x, input_area.y));
 
     let footer_area = padded_row(rect, rect.height.saturating_sub(2), 2);
+    let mut footer_spans = vec![
+        Span::styled(
+            "enter",
+            Style::default().fg(theme.text).bg(theme.background_panel),
+        ),
+        Span::styled(
+            " submit",
+            Style::default()
+                .fg(theme.text_muted)
+                .bg(theme.background_panel),
+        ),
+    ];
+    if let Some(hint) = footer_hint {
+        footer_spans.push(Span::styled(
+            "    ",
+            Style::default().bg(theme.background_panel),
+        ));
+        footer_spans.push(Span::styled(
+            hint.to_string(),
+            Style::default()
+                .fg(theme.text_muted)
+                .bg(theme.background_panel),
+        ));
+    }
     f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                "enter",
-                Style::default().fg(theme.text).bg(theme.background_panel),
-            ),
-            Span::styled(
-                " submit",
-                Style::default()
-                    .fg(theme.text_muted)
-                    .bg(theme.background_panel),
-            ),
-        ]))
-        .style(Style::default().bg(theme.background_panel)),
+        Paragraph::new(Line::from(footer_spans)).style(Style::default().bg(theme.background_panel)),
         footer_area,
     );
 }

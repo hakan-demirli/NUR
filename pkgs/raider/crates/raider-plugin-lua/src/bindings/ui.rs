@@ -148,6 +148,9 @@ pub(crate) fn open_select_from_table(
                     .collect(),
             },
         );
+        if let Some(owner) = state.current_owner.clone() {
+            state.dialog_callback_owners.insert(callback_id, owner);
+        }
         callback_id
     } else {
         0

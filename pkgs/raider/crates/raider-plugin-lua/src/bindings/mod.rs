@@ -11,6 +11,7 @@ use crate::runtime::RuntimeState;
 pub(crate) mod command;
 pub(crate) mod http;
 pub(crate) mod json;
+pub(crate) mod plugins;
 pub(crate) mod process;
 pub(crate) mod route;
 pub(crate) mod state;
@@ -27,6 +28,7 @@ pub(crate) fn install_api(
 
     command::install(lua, &api, Arc::clone(&state), action_tx.clone())?;
     ui::install(lua, &api, Arc::clone(&state), action_tx.clone())?;
+    plugins::install(lua, &api, action_tx.clone())?;
     route::install(lua, &api, action_tx.clone(), current_session)?;
     state::install(lua, &api, workspace_directory)?;
     json::install(lua, &api)?;

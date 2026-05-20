@@ -3,7 +3,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch;
 
+use std::path::PathBuf;
+
 use raider_opencode::types::common::SessionId;
+use raider_tui::dialog::PluginInstallScope;
 use raider_tui::{Action, HostAction, ModelRef, Toast, ToastVariant, ViewAction};
 
 use crate::backend::Backend;
@@ -86,6 +89,31 @@ pub(super) async fn ui_event_task<B: Backend>(ctx: UiEventTask<B>) {
                 if let Some(plugin) = &plugin_handle {
                     plugin.send(raider_plugin_lua::PluginEvent::DialogDismissed { callback_id });
                 }
+            }
+            raider_tui::Event::TogglePlugin(id) => {
+                if let Some(plugin) = &plugin_handle {
+                    plugin.send(raider_plugin_lua::PluginEvent::LifecycleToggle(
+                        raider_plugin_lua::PluginId::new(id),
+                    ));
+                } else {
+                    let _ = action_tx.send(Action::Host(HostAction::SystemMessage(
+                        "Lua plugin runtime is not enabled.".to_string(),
+                    )));
+                }
+            }
+            raider_tui::Event::ReloadPlugin(id) => {
+                if let Some(plugin) = &plugin_handle {
+                    plugin.send(raider_plugin_lua::PluginEvent::LifecycleReload(
+                        raider_plugin_lua::PluginId::new(id),
+                    ));
+                } else {
+                    let _ = action_tx.send(Action::Host(HostAction::SystemMessage(
+                        "Lua plugin runtime is not enabled.".to_string(),
+                    )));
+                }
+            }
+            raider_tui::Event::InstallPluginPath { path, scope } => {
+                handle_install_plugin_path(&action_tx, plugin_handle.as_ref(), path, scope);
             }
             raider_tui::Event::UserMessage(text) => {
                 let _ = action_tx.send(Action::Host(HostAction::SetBusy(true)));
@@ -446,6 +474,100 @@ fn handle_share_command<B: Backend>(
             }
         }
     });
+}
+
+fn handle_install_plugin_path(
+    action_tx: &UnboundedSender<Action>,
+    plugin_handle: Option<&raider_plugin_lua::LuaPluginHandle>,
+    path: String,
+    scope: PluginInstallScope,
+) {
+    let Some(plugin) = plugin_handle else {
+        let _ = action_tx.send(Action::Host(HostAction::SystemMessage(
+            "Lua plugin runtime is not enabled.".to_string(),
+        )));
+        return;
+    };
+    let source = PathBuf::from(&path);
+    if !source.exists() {
+        let _ = action_tx.send(Action::Host(HostAction::SystemMessage(format!(
+            "Plugin install failed: {} does not exist",
+            source.display()
+        ))));
+        return;
+    }
+    if source.extension().and_then(|e| e.to_str()) != Some("lua") {
+        let _ = action_tx.send(Action::Host(HostAction::SystemMessage(format!(
+            "Plugin install failed: {} is not a .lua file",
+            source.display()
+        ))));
+        return;
+    }
+    let target_dir = match plugin_dir_for_scope(scope) {
+        Some(dir) => dir,
+        None => {
+            let _ = action_tx.send(Action::Host(HostAction::SystemMessage(
+                "Plugin install failed: could not resolve target directory".to_string(),
+            )));
+            return;
+        }
+    };
+    if let Err(e) = std::fs::create_dir_all(&target_dir) {
+        let _ = action_tx.send(Action::Host(HostAction::SystemMessage(format!(
+            "Plugin install failed: could not create {}: {e}",
+            target_dir.display()
+        ))));
+        return;
+    }
+    let file_name = match source.file_name() {
+        Some(name) => name.to_os_string(),
+        None => {
+            let _ = action_tx.send(Action::Host(HostAction::SystemMessage(format!(
+                "Plugin install failed: {} has no file name",
+                source.display()
+            ))));
+            return;
+        }
+    };
+    let target = target_dir.join(file_name);
+    if let Err(e) = std::fs::copy(&source, &target) {
+        let _ = action_tx.send(Action::Host(HostAction::SystemMessage(format!(
+            "Plugin install failed: copy {} → {}: {e}",
+            source.display(),
+            target.display()
+        ))));
+        return;
+    }
+    plugin.send(raider_plugin_lua::PluginEvent::LifecycleAdd {
+        path: target.clone(),
+    });
+    let _ = action_tx.send(Action::View(ViewAction::ShowToast(Toast::new(
+        format!("Installing plugin from {}", target.display()),
+        ToastVariant::Success,
+    ))));
+}
+
+fn plugin_dir_for_scope(scope: PluginInstallScope) -> Option<PathBuf> {
+    match scope {
+        PluginInstallScope::Global => global_plugin_dir(),
+        PluginInstallScope::Local => local_plugin_dir(),
+    }
+}
+
+fn global_plugin_dir() -> Option<PathBuf> {
+    let base =
+        if let Some(path) = std::env::var_os("XDG_CONFIG_HOME").filter(|path| !path.is_empty()) {
+            PathBuf::from(path)
+        } else {
+            let home = std::env::var_os("HOME").filter(|path| !path.is_empty())?;
+            PathBuf::from(home).join(".config")
+        };
+    Some(base.join("raider").join("plugins"))
+}
+
+fn local_plugin_dir() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    Some(cwd.join(".raider").join("plugins"))
 }
 
 fn handle_compact_command<B: Backend>(

@@ -159,9 +159,7 @@ fn build_host(cli: &Cli, directory: &str) -> Result<HostHandle, Box<dyn Error>> 
     let config = ClientConfig::new(&cli.server, directory)?.with_token(cli.token.clone());
     let client = Client::connect(config)?;
     let backend = Arc::new(OpencodeBackend::new(client));
-    let lua_plugin_paths = if cli.no_plugins {
-        Vec::new()
-    } else if cli.plugins.is_empty() {
+    let lua_plugin_paths = if cli.plugins.is_empty() {
         default_lua_plugin_paths()
     } else {
         cli.plugins.clone()
@@ -170,6 +168,7 @@ fn build_host(cli: &Cli, directory: &str) -> Result<HostHandle, Box<dyn Error>> 
         initial_session: cli.session.as_deref().map(raider_opencode::SessionId::new),
         workspace_directory: Some(directory.to_string()),
         lua_plugin_paths,
+        disable_plugins: cli.no_plugins,
         ..Default::default()
     };
     Ok(Runtime::spawn(backend, runtime_config))

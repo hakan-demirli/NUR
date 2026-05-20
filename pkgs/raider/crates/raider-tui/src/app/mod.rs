@@ -4,6 +4,7 @@ pub mod input;
 pub mod messages;
 pub mod models;
 pub mod permission;
+pub mod plugin_manager;
 pub mod prompt_ui;
 pub mod question;
 pub mod runtime;
@@ -224,6 +225,12 @@ impl App {
             ViewAction::SubagentGoToParent => self.subagent_go_to_parent(),
             ViewAction::SubagentCycleSibling(delta) => self.subagent_cycle_sibling(delta),
 
+            ViewAction::OpenPluginManager => self.open_plugin_manager(),
+            ViewAction::OpenPluginInstallPrompt => self.open_plugin_install_prompt(),
+            ViewAction::TogglePlugin(id) => self.toggle_plugin(id),
+            ViewAction::ReloadPlugin(id) => self.reload_plugin(id),
+            ViewAction::AddPluginPath(path) => self.add_plugin_path(path),
+
             ViewAction::Command(cmd) => self.run_command(cmd),
             ViewAction::ShowToast(toast) => self.dialogs.show_toast(toast),
             ViewAction::CopyToClipboard {
@@ -246,6 +253,17 @@ impl App {
                 if self.dialogs.register_plugin_commands(commands) {
                     self.dialogs
                         .rebuild_slash_completion(&mut self.input.completion);
+                }
+            }
+            HostAction::UnregisterPluginCommands(names) => {
+                if self.dialogs.unregister_plugin_commands(&names) {
+                    self.dialogs
+                        .rebuild_slash_completion(&mut self.input.completion);
+                }
+            }
+            HostAction::SetPluginList(plugins) => {
+                if self.dialogs.set_plugin_list(plugins) {
+                    self.refresh_plugin_manager_if_open();
                 }
             }
             HostAction::OpenPluginSelect {
@@ -1407,6 +1425,8 @@ impl App {
             | DialogPayload::SessionRename { .. }
             | DialogPayload::AgentPicker { .. }
             | DialogPayload::PluginAlert { .. }
+            | DialogPayload::PluginManager { .. }
+            | DialogPayload::PluginInstall { .. }
             | DialogPayload::MessageActions { .. }
             | DialogPayload::ForkPicker { .. } => {}
             DialogPayload::PluginSelect { callback_id, .. } => {
@@ -1505,6 +1525,12 @@ impl App {
                     message_id: current,
                 });
             }
+            DialogPayload::PluginManager { current } => {
+                self.confirm_plugin_manager(current);
+            }
+            DialogPayload::PluginInstall { path, scope } => {
+                self.confirm_plugin_install(path, scope);
+            }
         }
     }
 
@@ -1547,6 +1573,19 @@ impl App {
                 _ => {}
             }
             return;
+        }
+        match self.dialogs.dialog.as_ref().map(|d| d.kind()) {
+            Some(DialogKind::PluginManager) => {
+                if self.handle_plugin_manager_key(code, mods) {
+                    return;
+                }
+            }
+            Some(DialogKind::PluginInstall) => {
+                if self.handle_plugin_install_key(code, mods) {
+                    return;
+                }
+            }
+            _ => {}
         }
         match code {
             KeyCode::Esc => self.close_dialog(false),
@@ -1640,6 +1679,59 @@ impl App {
 
     pub fn dialog_kind(&self) -> Option<DialogKind> {
         self.dialogs.dialog_kind()
+    }
+
+    fn handle_plugin_manager_key(&mut self, code: KeyCode, mods: KeyModifiers) -> bool {
+        match (code, mods) {
+            (KeyCode::Char(' '), m) if m.is_empty() => {
+                let Some(value) = self
+                    .dialogs
+                    .dialog
+                    .as_ref()
+                    .and_then(|d| d.selected_option())
+                    .map(|opt| opt.value.clone())
+                    .filter(|v| !v.is_empty())
+                else {
+                    return true;
+                };
+                self.confirm_plugin_manager(value);
+                true
+            }
+            (KeyCode::Char('r'), m) if m.contains(KeyModifiers::CONTROL) => {
+                if let Some(value) = self
+                    .dialogs
+                    .dialog
+                    .as_ref()
+                    .and_then(|d| d.selected_option())
+                    .map(|opt| opt.value.clone())
+                    .filter(|v| !v.is_empty())
+                {
+                    self.reload_plugin(value);
+                }
+                true
+            }
+            (KeyCode::Char('I'), _) => {
+                self.dialogs.dialog = None;
+                self.open_plugin_install_prompt();
+                true
+            }
+            (KeyCode::Char('i'), m) if m.contains(KeyModifiers::SHIFT) => {
+                self.dialogs.dialog = None;
+                self.open_plugin_install_prompt();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_plugin_install_key(&mut self, code: KeyCode, mods: KeyModifiers) -> bool {
+        match (code, mods) {
+            (KeyCode::Tab, m) if m.is_empty() => {
+                self.toggle_plugin_install_scope();
+                true
+            }
+            _ => false,
+        }
     }
 
     fn toggle_pin_for_selected_session(&mut self) {

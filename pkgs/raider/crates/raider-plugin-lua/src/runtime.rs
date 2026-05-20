@@ -4,11 +4,44 @@ use mlua::{Function, Lua, Table};
 
 use raider_tui::PluginDialogOption;
 
+use crate::PluginId;
+
 #[derive(Default)]
 pub(crate) struct RuntimeState {
     pub(crate) commands: HashMap<String, CommandCallback>,
+    pub(crate) command_owners: HashMap<String, PluginId>,
     pub(crate) dialog_callbacks: HashMap<u64, DialogCallback>,
+    pub(crate) dialog_callback_owners: HashMap<u64, PluginId>,
     pub(crate) next_callback_id: u64,
+    pub(crate) current_owner: Option<PluginId>,
+}
+
+impl RuntimeState {
+    pub(crate) fn drop_owned_by(&mut self, owner: &PluginId) -> Vec<String> {
+        let mut dropped = Vec::new();
+        let command_names: Vec<String> = self
+            .command_owners
+            .iter()
+            .filter(|(_, id)| *id == owner)
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in command_names {
+            self.commands.remove(&name);
+            self.command_owners.remove(&name);
+            dropped.push(name);
+        }
+        let dialog_ids: Vec<u64> = self
+            .dialog_callback_owners
+            .iter()
+            .filter(|(_, plugin)| *plugin == owner)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in dialog_ids {
+            self.dialog_callbacks.remove(&id);
+            self.dialog_callback_owners.remove(&id);
+        }
+        dropped
+    }
 }
 
 #[derive(Clone)]

@@ -24,10 +24,14 @@ pub(crate) fn install(
             let specs = command_specs_from_value(spec)?;
             {
                 let mut state = register_state.lock().map_err(lock_error)?;
+                let owner = state.current_owner.clone();
                 for spec in specs {
                     let (command, callback) = plugin_command_from_table(&spec)?;
                     if let Some(callback) = callback {
                         state.commands.insert(command.name.clone(), callback);
+                    }
+                    if let Some(owner) = owner.clone() {
+                        state.command_owners.insert(command.name.clone(), owner);
                     }
                     commands.push(command);
                 }

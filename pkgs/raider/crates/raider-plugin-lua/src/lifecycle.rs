@@ -5,22 +5,19 @@ use mlua::Lua;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
-use raider_tui::{Action, HostAction};
+use raider_tui::{Action, HostAction, PluginStatus};
 
 use crate::bindings::install_api;
 use crate::dispatch::handle_event;
+use crate::registry::PluginRegistry;
 use crate::runtime::RuntimeState;
-use crate::{LuaPluginConfig, LuaPluginHandle, PluginEvent};
+use crate::{LuaPluginConfig, LuaPluginHandle, PluginEvent, PluginId, PluginKind};
 
 pub fn spawn(
     config: LuaPluginConfig,
     action_tx: UnboundedSender<Action>,
 ) -> Option<(LuaPluginHandle, JoinHandle<()>)> {
-    let plugin_paths = expand_plugin_paths(config.plugin_paths);
-    if plugin_paths.is_empty() {
-        return None;
-    }
-
+    let plugin_paths = expand_plugin_paths(config.plugin_paths.clone());
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let handle = LuaPluginHandle { tx };
     let task = tokio::spawn(async move {
@@ -66,24 +63,107 @@ async fn run(
         config.current_session.clone(),
     )?;
 
+    let mut registry = PluginRegistry::new();
+
     for path in &config.plugin_paths {
-        let source = std::fs::read_to_string(path)?;
-        lua.load(&source)
-            .set_name(path.display().to_string())
-            .exec()?;
-        tracing::info!(path = %path.display(), "loaded lua plugin");
+        match registry.load_path(&lua, &state, path.clone(), PluginKind::Configured) {
+            Ok(id) => tracing::info!(plugin = %id, path = %path.display(), "loaded lua plugin"),
+            Err(error) => {
+                tracing::warn!(path = %path.display(), error = %error, "lua plugin load failed");
+                let _ = action_tx.send(Action::Host(HostAction::SystemMessage(format!(
+                    "Plugin {} failed to load: {error}",
+                    path.display()
+                ))));
+            }
+        }
     }
+    publish_plugin_list(&registry, &action_tx);
 
     while let Some(event) = rx.recv().await {
-        if let Err(error) = handle_event(&lua, Arc::clone(&state), &action_tx, event) {
-            tracing::warn!(error = %error, "lua plugin event failed");
-            let _ = action_tx.send(Action::Host(HostAction::SystemMessage(format!(
-                "Lua plugin error: {error}"
-            ))));
+        match event {
+            PluginEvent::LifecycleToggle(id) => {
+                let status = registry.status(&id);
+                match status {
+                    Some(PluginStatus::Active) => match registry.deactivate(&state, &id) {
+                        Ok(dropped) => {
+                            if !dropped.is_empty() {
+                                let _ = action_tx.send(Action::Host(
+                                    HostAction::UnregisterPluginCommands(dropped),
+                                ));
+                            }
+                            publish_plugin_list(&registry, &action_tx);
+                        }
+                        Err(error) => {
+                            notify_plugin_error(&action_tx, "deactivate", &id, &error);
+                            publish_plugin_list(&registry, &action_tx);
+                        }
+                    },
+                    Some(PluginStatus::Inactive | PluginStatus::Error(_)) => {
+                        if let Err(error) = registry.activate(&lua, &state, &id) {
+                            notify_plugin_error(&action_tx, "activate", &id, &error);
+                        }
+                        publish_plugin_list(&registry, &action_tx);
+                    }
+                    None => {
+                        notify_plugin_error(&action_tx, "toggle", &id, "unknown plugin id");
+                    }
+                }
+            }
+            PluginEvent::LifecycleReload(id) => match registry.reload(&lua, &state, &id) {
+                Ok(dropped) => {
+                    if !dropped.is_empty() {
+                        let _ = action_tx
+                            .send(Action::Host(HostAction::UnregisterPluginCommands(dropped)));
+                    }
+                    publish_plugin_list(&registry, &action_tx);
+                }
+                Err(error) => {
+                    notify_plugin_error(&action_tx, "reload", &id, &error);
+                    publish_plugin_list(&registry, &action_tx);
+                }
+            },
+            PluginEvent::LifecycleAdd { path } => {
+                match registry.load_path(&lua, &state, path.clone(), PluginKind::Installed) {
+                    Ok(id) => {
+                        tracing::info!(plugin = %id, path = %path.display(), "installed lua plugin");
+                        let _ = action_tx.send(Action::Host(HostAction::SystemMessage(format!(
+                            "Plugin {id} installed from {}",
+                            path.display()
+                        ))));
+                    }
+                    Err(error) => {
+                        tracing::warn!(path = %path.display(), error = %error, "lua plugin install failed");
+                        let _ = action_tx.send(Action::Host(HostAction::SystemMessage(format!(
+                            "Plugin install failed for {}: {error}",
+                            path.display()
+                        ))));
+                    }
+                }
+                publish_plugin_list(&registry, &action_tx);
+            }
+            other => {
+                if let Err(error) = handle_event(&lua, Arc::clone(&state), &action_tx, other) {
+                    tracing::warn!(error = %error, "lua plugin event failed");
+                    let _ = action_tx.send(Action::Host(HostAction::SystemMessage(format!(
+                        "Lua plugin error: {error}"
+                    ))));
+                }
+            }
         }
     }
 
     Ok(())
+}
+
+fn publish_plugin_list(registry: &PluginRegistry, action_tx: &UnboundedSender<Action>) {
+    let _ = action_tx.send(Action::Host(HostAction::SetPluginList(registry.snapshot())));
+}
+
+fn notify_plugin_error(action_tx: &UnboundedSender<Action>, op: &str, id: &PluginId, error: &str) {
+    tracing::warn!(op, plugin = %id, error, "lua plugin lifecycle failed");
+    let _ = action_tx.send(Action::Host(HostAction::SystemMessage(format!(
+        "Plugin {id} {op} failed: {error}"
+    ))));
 }
 
 fn expand_plugin_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {

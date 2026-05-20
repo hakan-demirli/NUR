@@ -382,6 +382,7 @@ async fn read_only_viewer_end_to_end() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -535,6 +536,7 @@ async fn disconnect_message_rate_limited_under_storm() {
             disconnect_warning_threshold: 3,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -572,6 +574,7 @@ async fn reconnected_message_only_after_disconnect_warning() {
             disconnect_warning_threshold: 3,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -617,6 +620,7 @@ async fn user_message_creates_session_then_submits_prompt() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -715,6 +719,7 @@ async fn fresh_session_creation_does_not_wipe_local_transcript() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -772,6 +777,7 @@ async fn session_switched_does_refetch_messages() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -841,6 +847,7 @@ async fn switching_back_to_cached_session_does_not_replay_stale_transcript() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -944,6 +951,7 @@ async fn compact_command_dispatches_session_summarize() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -1040,6 +1048,7 @@ async fn compact_command_does_not_surface_backend_http_failure_to_user() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -1101,6 +1110,7 @@ async fn compact_without_active_session_emits_system_message() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -1144,6 +1154,7 @@ async fn share_command_dispatches_session_share_and_surfaces_url() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -1191,6 +1202,7 @@ async fn unshare_command_dispatches_session_unshare() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -1237,6 +1249,7 @@ async fn interrupt_event_dispatches_session_abort() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -1285,6 +1298,7 @@ async fn interrupt_event_without_session_is_silent_noop() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -1318,6 +1332,7 @@ async fn undo_event_dispatches_session_revert() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -1358,6 +1373,7 @@ async fn redo_event_dispatches_session_unrevert() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -1395,6 +1411,7 @@ async fn rename_command_dispatches_session_rename() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -1435,6 +1452,7 @@ async fn explicit_rename_event_dispatches_selected_session_rename() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -1475,6 +1493,7 @@ async fn new_command_resets_active_session_and_transcript() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -1553,6 +1572,7 @@ async fn subagent_navigate_does_not_abort_outgoing_session() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
@@ -1603,6 +1623,7 @@ async fn session_switched_does_not_abort_outgoing_session() {
             disconnect_warning_threshold: 100,
             workspace_directory: None,
             lua_plugin_paths: Vec::new(),
+            disable_plugins: false,
         },
     );
 
