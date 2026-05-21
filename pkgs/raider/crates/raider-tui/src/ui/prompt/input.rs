@@ -2,8 +2,8 @@ use ratatui::layout::Position;
 use ratatui::prelude::*;
 use ratatui::style::Modifier;
 use ratatui::widgets::{Block, Paragraph};
-use unicode_width::UnicodeWidthStr;
 
+use crate::app::input::{wrap_for_display, WrapResult};
 use crate::app::App;
 use crate::ui::agent::agent_color;
 
@@ -61,74 +61,8 @@ pub(crate) fn wrap_input(
     width: usize,
     app: &App,
 ) -> (Vec<String>, Option<(usize, usize)>) {
-    let mut out: Vec<String> = Vec::new();
-    let mut cursor_pos: Option<(usize, usize)> = None;
-    let mut current_byte_idx = 0;
-
-    let parts: Vec<&str> = input.split('\n').collect();
-    let parts_count = parts.len();
-    let opts = textwrap::Options::new(width.max(1)).break_words(true);
-
-    let cursor = app.input.cursor_position;
-
-    for (i, part) in parts.iter().enumerate() {
-        let part_start = current_byte_idx;
-        let part_len = part.len();
-
-        let mut lines_for_part = Vec::new();
-        if part.is_empty() {
-            lines_for_part.push(String::new());
-        } else {
-            let s = format!("{}\u{200B}", part);
-            let wrapped = textwrap::wrap(&s, &opts);
-            let last_idx = wrapped.len().saturating_sub(1);
-            for (w_i, w) in wrapped.iter().enumerate() {
-                let mut s = w.to_string();
-                if w_i == last_idx && s.ends_with('\u{200B}') {
-                    s.pop();
-                }
-                lines_for_part.push(s);
-            }
-        }
-
-        let mut local = 0;
-        for (li, line_str) in lines_for_part.iter().enumerate() {
-            let line_bytes = line_str.len();
-            let g_start = part_start + local;
-            let g_end = g_start + line_bytes;
-            let is_last_visual = li == lines_for_part.len() - 1;
-
-            if cursor_pos.is_none() {
-                if cursor >= g_start && cursor < g_end {
-                    let off = cursor - g_start;
-                    let cx = UnicodeWidthStr::width(&line_str[..off]);
-                    cursor_pos = Some((cx, out.len()));
-                } else if cursor == g_end && is_last_visual {
-                    let cx = UnicodeWidthStr::width(line_str.as_str());
-                    cursor_pos = Some((cx, out.len()));
-                }
-            }
-            out.push(line_str.clone());
-            local += line_bytes;
-        }
-
-        current_byte_idx += part_len;
-        if i < parts_count - 1 {
-            current_byte_idx += 1;
-        }
-    }
-
-    if cursor_pos.is_none() && cursor == current_byte_idx {
-        if out.is_empty() {
-            cursor_pos = Some((0, 0));
-            out.push(String::new());
-        } else {
-            let last = out.len() - 1;
-            cursor_pos = Some((UnicodeWidthStr::width(out[last].as_str()), last));
-        }
-    }
-
-    (out, cursor_pos)
+    let WrapResult { rows, cursor, .. } = wrap_for_display(input, app.input.cursor_position, width);
+    (rows, cursor)
 }
 
 pub(crate) fn render_prompt(
@@ -186,10 +120,10 @@ pub(crate) fn render_prompt(
     let cursor_row = cursor_visual.map(|(_, cy)| cy as u16).unwrap_or(0);
     let scroll = if total <= inner_h {
         0
-    } else if cursor_row + 1 > inner_h {
-        (cursor_row + 1).saturating_sub(inner_h)
     } else {
-        0
+        let max_scroll = total - inner_h;
+        let needed = cursor_row.saturating_sub(inner_h.saturating_sub(1));
+        needed.min(max_scroll)
     };
 
     if !app.input.input.is_empty() {

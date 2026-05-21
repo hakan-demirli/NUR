@@ -1,7 +1,111 @@
 use crossterm::event::{KeyCode, KeyModifiers};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::completion::CompletionManager;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WrapResult {
+    pub rows: Vec<String>,
+    pub row_byte_starts: Vec<usize>,
+    pub cursor: Option<(usize, usize)>,
+}
+
+pub fn wrap_for_display(input: &str, cursor: usize, width: usize) -> WrapResult {
+    let width = width.max(1);
+    let cursor = cursor.min(input.len());
+
+    let mut rows: Vec<String> = Vec::new();
+    let mut row_byte_starts: Vec<usize> = Vec::new();
+    let mut cursor_pos: Option<(usize, usize)> = None;
+
+    let mut cur = String::new();
+    let mut cur_width: usize = 0;
+    let mut cur_start: usize = 0;
+
+    let bytes_total = input.len();
+
+    for (byte_idx, ch) in input.char_indices() {
+        let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0);
+        let will_wrap = ch != '\n' && ch_w > 0 && cur_width + ch_w > width && cur_width > 0;
+
+        if cursor_pos.is_none() && cursor == byte_idx {
+            cursor_pos = if will_wrap {
+                Some((0, rows.len() + 1))
+            } else {
+                Some((cur_width, rows.len()))
+            };
+        }
+
+        if ch == '\n' {
+            rows.push(std::mem::take(&mut cur));
+            row_byte_starts.push(cur_start);
+            cur_width = 0;
+            cur_start = byte_idx + 1;
+            continue;
+        }
+
+        if will_wrap {
+            rows.push(std::mem::take(&mut cur));
+            row_byte_starts.push(cur_start);
+            cur_width = 0;
+            cur_start = byte_idx;
+        }
+
+        cur.push(ch);
+        cur_width += ch_w;
+    }
+
+    let ends_with_newline = input.as_bytes().last() == Some(&b'\n');
+    if !cur.is_empty() || rows.is_empty() || ends_with_newline {
+        rows.push(std::mem::take(&mut cur));
+        row_byte_starts.push(cur_start);
+    }
+
+    if cursor_pos.is_none() && cursor == bytes_total {
+        let last = rows.len() - 1;
+        cursor_pos = Some((UnicodeWidthStr::width(rows[last].as_str()), last));
+    }
+
+    WrapResult {
+        rows,
+        row_byte_starts,
+        cursor: cursor_pos,
+    }
+}
+
+fn land_on_row(
+    rows: &[String],
+    row_byte_starts: &[usize],
+    target_row: usize,
+    desired_col: usize,
+) -> usize {
+    let target_line = &rows[target_row];
+    let target_start = row_byte_starts[target_row];
+    let target_bytes = target_line.len();
+
+    let mut byte_off = 0usize;
+    let mut col = 0usize;
+    for ch in target_line.chars() {
+        let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if col + ch_w > desired_col {
+            break;
+        }
+        col += ch_w;
+        byte_off += ch.len_utf8();
+    }
+
+    if byte_off == target_bytes && byte_off > 0 {
+        if let Some(&next_start) = row_byte_starts.get(target_row + 1) {
+            if next_start == target_start + target_bytes {
+                if let Some(last_ch) = target_line.chars().last() {
+                    byte_off -= last_ch.len_utf8();
+                }
+            }
+        }
+    }
+
+    target_start + byte_off
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PromptPartKind {
@@ -314,79 +418,13 @@ impl InputState {
     }
 
     fn visual_layout(&self, width: usize) -> (Vec<String>, Vec<usize>, usize, usize) {
-        let w = width.max(1);
-        let opts = textwrap::Options::new(w).break_words(true);
-        let mut rows: Vec<String> = Vec::new();
-        let mut row_byte_starts: Vec<usize> = Vec::new();
-        let mut cursor_row: usize = 0;
-        let mut cursor_col: usize = 0;
-        let mut cursor_found = false;
-        let mut current_byte_idx: usize = 0;
-
-        let parts: Vec<&str> = self.input.split('\n').collect();
-        let parts_count = parts.len();
-
-        for (i, part) in parts.iter().enumerate() {
-            let part_start = current_byte_idx;
-            let part_len = part.len();
-
-            let mut lines_for_part = Vec::new();
-            if part.is_empty() {
-                lines_for_part.push(String::new());
-            } else {
-                let s = format!("{}\u{200B}", part);
-                let wrapped = textwrap::wrap(&s, &opts);
-                let last_idx = wrapped.len().saturating_sub(1);
-                for (w_i, wl) in wrapped.iter().enumerate() {
-                    let mut s = wl.to_string();
-                    if w_i == last_idx && s.ends_with('\u{200B}') {
-                        s.pop();
-                    }
-                    lines_for_part.push(s);
-                }
-            }
-
-            let mut local = 0usize;
-            for (li, line_str) in lines_for_part.iter().enumerate() {
-                let line_bytes = line_str.len();
-                let g_start = part_start + local;
-                let g_end = g_start + line_bytes;
-                let is_last_visual = li == lines_for_part.len() - 1;
-
-                row_byte_starts.push(g_start);
-
-                if !cursor_found {
-                    if self.cursor_position >= g_start && self.cursor_position < g_end {
-                        let off = self.cursor_position - g_start;
-                        cursor_row = rows.len();
-                        cursor_col = UnicodeWidthStr::width(&line_str[..off]);
-                        cursor_found = true;
-                    } else if self.cursor_position == g_end && is_last_visual {
-                        cursor_row = rows.len();
-                        cursor_col = UnicodeWidthStr::width(line_str.as_str());
-                        cursor_found = true;
-                    }
-                }
-                rows.push(line_str.clone());
-                local += line_bytes;
-            }
-
-            current_byte_idx += part_len;
-            if i < parts_count - 1 {
-                current_byte_idx += 1;
-            }
-        }
-
-        if !cursor_found && self.cursor_position == current_byte_idx {
-            if rows.is_empty() {
-                rows.push(String::new());
-                row_byte_starts.push(0);
-            }
-            cursor_row = rows.len() - 1;
-            cursor_col = UnicodeWidthStr::width(rows.last().unwrap().as_str());
-        }
-
-        (rows, row_byte_starts, cursor_row, cursor_col)
+        let WrapResult {
+            rows,
+            row_byte_starts,
+            cursor,
+        } = wrap_for_display(&self.input, self.cursor_position, width);
+        let (col, row) = cursor.unwrap_or((0, 0));
+        (rows, row_byte_starts, row, col)
     }
 
     pub fn cursor_visual_row(&self, width: usize) -> usize {
@@ -405,19 +443,7 @@ impl InputState {
             return false;
         }
         let target_row = cur_row - 1;
-        let target_line = &rows[target_row];
-        let target_start = row_byte_starts[target_row];
-        let mut byte_off = 0usize;
-        let mut col = 0usize;
-        for ch in target_line.chars() {
-            let ch_w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-            if col + ch_w > cur_col {
-                break;
-            }
-            col += ch_w;
-            byte_off += ch.len_utf8();
-        }
-        self.cursor_position = target_start + byte_off;
+        self.cursor_position = land_on_row(&rows, &row_byte_starts, target_row, cur_col);
         true
     }
 
@@ -427,19 +453,7 @@ impl InputState {
             return false;
         }
         let target_row = cur_row + 1;
-        let target_line = &rows[target_row];
-        let target_start = row_byte_starts[target_row];
-        let mut byte_off = 0usize;
-        let mut col = 0usize;
-        for ch in target_line.chars() {
-            let ch_w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-            if col + ch_w > cur_col {
-                break;
-            }
-            col += ch_w;
-            byte_off += ch.len_utf8();
-        }
-        self.cursor_position = target_start + byte_off;
+        self.cursor_position = land_on_row(&rows, &row_byte_starts, target_row, cur_col);
         true
     }
 
@@ -545,4 +559,254 @@ pub enum CompletionOutcome {
     Consumed,
     NotConsumed,
     SubmitNow,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wrap(input: &str, cursor: usize, width: usize) -> WrapResult {
+        wrap_for_display(input, cursor, width)
+    }
+
+    #[test]
+    fn wrap_preserves_every_byte_of_pure_whitespace() {
+        let input: String = " ".repeat(100);
+        let r = wrap(&input, 0, 10);
+        assert_eq!(r.rows.len(), 10);
+        for row in &r.rows {
+            assert_eq!(row.len(), 10);
+            assert!(row.chars().all(|c| c == ' '));
+        }
+        let total: usize = r.rows.iter().map(|s| s.len()).sum();
+        assert_eq!(total, input.len());
+    }
+
+    #[test]
+    fn wrap_cursor_in_middle_of_whitespace_run_is_found() {
+        let input: String = " ".repeat(40);
+        let r = wrap(&input, 20, 10);
+        assert_eq!(r.cursor, Some((0, 2)));
+        assert_eq!(r.rows.len(), 4);
+        let r = wrap(&input, 15, 10);
+        assert_eq!(r.cursor, Some((5, 1)));
+    }
+
+    #[test]
+    fn wrap_cursor_at_end_of_whitespace_is_found() {
+        let input: String = " ".repeat(40);
+        let r = wrap(&input, input.len(), 10);
+        assert_eq!(r.rows.len(), 4);
+        assert_eq!(r.cursor, Some((10, 3)));
+    }
+
+    #[test]
+    fn wrap_breaks_long_word_at_width() {
+        let input = "abcdefghij".repeat(3);
+        let r = wrap(&input, input.len(), 10);
+        assert_eq!(r.rows.len(), 3);
+        for row in &r.rows {
+            assert_eq!(row.len(), 10);
+        }
+        assert_eq!(r.cursor, Some((10, 2)));
+    }
+
+    #[test]
+    fn wrap_long_word_cursor_at_each_byte_maps_correctly() {
+        let input = "abcdefghijklmnop";
+        for byte_pos in 0..=input.len() {
+            let r = wrap(input, byte_pos, 5);
+            let (col, row) = r.cursor.expect("cursor must be found");
+            let expected_row = byte_pos / 5;
+            let expected_col = byte_pos % 5;
+            let on_boundary = expected_col == 0 && byte_pos > 0 && byte_pos < input.len();
+            if on_boundary {
+                assert!(
+                    (col, row) == (0, expected_row) || (col, row) == (5, expected_row - 1),
+                    "byte {byte_pos}: got ({col}, {row})"
+                );
+            } else if byte_pos == input.len() {
+                let last_row = (input.len() - 1) / 5;
+                let last_col = input.len() - last_row * 5;
+                assert_eq!((col, row), (last_col, last_row));
+            } else {
+                assert_eq!((col, row), (expected_col, expected_row));
+            }
+        }
+    }
+
+    #[test]
+    fn wrap_keeps_space_at_wrap_boundary() {
+        let input = "abcde     fghij";
+        let r = wrap(input, 0, 5);
+        assert_eq!(r.rows, vec!["abcde", "     ", "fghij"]);
+        let total: usize = r.rows.iter().map(|s| s.len()).sum();
+        assert_eq!(total, input.len());
+    }
+
+    #[test]
+    fn wrap_cursor_on_space_at_boundary() {
+        let input = "abcde     fghij";
+        let r = wrap(input, 5, 5);
+        assert_eq!(r.cursor, Some((0, 1)));
+        let r = wrap(input, 8, 5);
+        assert_eq!(r.cursor, Some((3, 1)));
+    }
+
+    #[test]
+    fn wrap_newline_starts_new_row() {
+        let r = wrap("foo\nbar", 4, 80);
+        assert_eq!(r.rows, vec!["foo".to_string(), "bar".to_string()]);
+        assert_eq!(r.cursor, Some((0, 1)));
+    }
+
+    #[test]
+    fn wrap_consecutive_newlines_produce_empty_rows() {
+        let r = wrap("a\n\nb", 4, 80);
+        assert_eq!(
+            r.rows,
+            vec!["a".to_string(), "".to_string(), "b".to_string()]
+        );
+        assert_eq!(r.cursor, Some((1, 2)));
+    }
+
+    #[test]
+    fn wrap_empty_input_produces_single_empty_row() {
+        let r = wrap("", 0, 10);
+        assert_eq!(r.rows, vec![String::new()]);
+        assert_eq!(r.cursor, Some((0, 0)));
+    }
+
+    #[test]
+    fn wrap_trailing_newline_opens_new_empty_row_for_cursor() {
+        let r = wrap("abc\n", 4, 80);
+        assert_eq!(r.rows, vec!["abc".to_string(), String::new()]);
+        assert_eq!(r.cursor, Some((0, 1)));
+    }
+
+    #[test]
+    fn wrap_lone_newline_produces_two_empty_rows() {
+        let r = wrap("\n", 1, 80);
+        assert_eq!(r.rows, vec![String::new(), String::new()]);
+        assert_eq!(r.cursor, Some((0, 1)));
+    }
+
+    #[test]
+    fn wrap_input_ending_in_two_newlines_opens_two_blank_rows_below() {
+        let r = wrap("abc\n\n", 5, 80);
+        assert_eq!(
+            r.rows,
+            vec!["abc".to_string(), String::new(), String::new()]
+        );
+        assert_eq!(r.cursor, Some((0, 2)));
+    }
+
+    #[test]
+    fn input_state_enter_at_end_of_input_makes_cursor_appear_on_new_row() {
+        let mut s = InputState::new();
+        for c in "abc".chars() {
+            s.insert_char(c);
+        }
+        s.insert_newline();
+        let r = wrap_for_display(&s.input, s.cursor_position, 80);
+        assert_eq!(r.rows, vec!["abc".to_string(), String::new()]);
+        assert_eq!(r.cursor, Some((0, 1)));
+    }
+
+    #[test]
+    fn wrap_does_not_split_multibyte_codepoint() {
+        let input = "café";
+        let r = wrap(input, input.len(), 4);
+        assert_eq!(r.rows, vec!["café".to_string()]);
+        assert_eq!(r.cursor, Some((4, 0)));
+    }
+
+    #[test]
+    fn wrap_wide_cjk_chars_count_two_cells() {
+        let input = "中文测试";
+        let r = wrap(input, input.len(), 4);
+        assert_eq!(r.rows.len(), 2);
+        assert_eq!(r.rows[0].chars().count(), 2);
+        assert_eq!(r.rows[1].chars().count(), 2);
+        assert_eq!(r.cursor, Some((4, 1)));
+    }
+
+    #[test]
+    fn wrap_wide_char_overflow_wraps_to_next_row() {
+        let input = "abc中";
+        let r = wrap(input, input.len(), 4);
+        assert_eq!(r.rows, vec!["abc".to_string(), "中".to_string()]);
+    }
+
+    #[test]
+    fn wrap_zero_width_char_attaches_to_previous_row() {
+        let input = "abcde\u{301}";
+        let r = wrap(input, input.len(), 5);
+        assert_eq!(r.rows.len(), 1);
+        assert_eq!(r.rows[0], "abcde\u{301}");
+    }
+
+    #[test]
+    fn input_state_move_up_then_down_returns_to_same_column() {
+        let mut s = InputState::new();
+        for c in "abcdefghij\nklmnop".chars() {
+            s.insert_char(c);
+        }
+        let original = s.cursor_position;
+        let moved = s.move_cursor_up(80);
+        assert!(moved);
+        let moved_back = s.move_cursor_down(80);
+        assert!(moved_back);
+        assert_eq!(s.cursor_position, original);
+    }
+
+    #[test]
+    fn input_state_move_up_in_wrapped_whitespace_lands_somewhere_valid() {
+        let mut s = InputState::new();
+        for _ in 0..40 {
+            s.insert_char(' ');
+        }
+        let moved = s.move_cursor_up(10);
+        assert!(moved);
+        assert!(s.cursor_position <= s.input.len());
+        let r = wrap_for_display(&s.input, s.cursor_position, 10);
+        let (_, row) = r.cursor.expect("cursor must be found after move_up");
+        assert_eq!(row, 2);
+    }
+
+    #[test]
+    fn input_state_type_after_move_up_inserts_at_visible_location() {
+        let mut s = InputState::new();
+        for _ in 0..40 {
+            s.insert_char(' ');
+        }
+        let moved = s.move_cursor_up(10);
+        assert!(moved);
+        let before = wrap_for_display(&s.input, s.cursor_position, 10)
+            .cursor
+            .expect("cursor visible after move_up");
+        let (col_before, row_before) = before;
+        assert_eq!(
+            row_before, 2,
+            "after move_up from end of full row 3, cursor must be on row 2"
+        );
+
+        s.insert_char('X');
+        let after = wrap_for_display(&s.input, s.cursor_position, 10);
+        let row_str = &after.rows[row_before];
+        let mut col_walk = 0usize;
+        let mut found = None;
+        for ch in row_str.chars() {
+            if col_walk == col_before {
+                found = Some(ch);
+                break;
+            }
+            col_walk += UnicodeWidthChar::width(ch).unwrap_or(0);
+        }
+        assert_eq!(
+            found,
+            Some('X'),
+            "typed char must land at the visible cursor position"
+        );
+    }
 }

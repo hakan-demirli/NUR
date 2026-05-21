@@ -5,9 +5,13 @@ use raider_tui::session::SessionEntry;
 use raider_tui::{HostMessage, ToolCall, ToolStatus};
 
 fn seed_parent_with_children(h: &mut Harness, parent: &str, children: &[&str]) {
-    let mut entries = vec![SessionEntry::new(parent, parent, "now")];
-    for c in children {
-        entries.push(SessionEntry::new(*c, *c, "now").with_parent(parent));
+    let mut entries = vec![SessionEntry::new(parent, parent, "now").with_created_ms(0)];
+    for (i, c) in children.iter().enumerate() {
+        entries.push(
+            SessionEntry::new(*c, *c, "now")
+                .with_parent(parent)
+                .with_created_ms(1_000 + i as i64),
+        );
     }
     h.app.sessions.set_sessions(entries);
     h.app.sessions.set_current(Some(parent.to_string()));
@@ -20,18 +24,87 @@ fn session_entry_with_parent_records_parent_id() {
 }
 
 #[test]
-fn children_of_returns_only_direct_children_sorted() {
+fn children_of_returns_children_in_creation_order() {
     let mut h = Harness::new(80, 24);
     h.app.sessions.set_sessions(vec![
         SessionEntry::new("p", "Parent", "now"),
-        SessionEntry::new("c-b", "Child B", "now").with_parent("p"),
-        SessionEntry::new("c-a", "Child A", "now").with_parent("p"),
+        SessionEntry::new("ses_AAA_zzzz", "first spawned", "now")
+            .with_parent("p")
+            .with_created_ms(1_000),
+        SessionEntry::new("ses_AAA_aaaa", "second spawned", "now")
+            .with_parent("p")
+            .with_created_ms(2_000),
+        SessionEntry::new("ses_AAA_mmmm", "third spawned", "now")
+            .with_parent("p")
+            .with_created_ms(3_000),
         SessionEntry::new("other", "Other", "now"),
     ]);
     let kids = h.app.sessions.sessions.children_of("p");
     assert_eq!(
         kids.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
-        vec!["c-a", "c-b"]
+        vec!["ses_AAA_zzzz", "ses_AAA_aaaa", "ses_AAA_mmmm"],
+        "children must come back in creation order regardless of id lex order",
+    );
+}
+
+#[test]
+fn children_of_breaks_same_ms_ties_by_id() {
+    let mut h = Harness::new(80, 24);
+    h.app.sessions.set_sessions(vec![
+        SessionEntry::new("p", "Parent", "now"),
+        SessionEntry::new("ses_zzz", "later id", "now")
+            .with_parent("p")
+            .with_created_ms(5_000),
+        SessionEntry::new("ses_aaa", "earlier id", "now")
+            .with_parent("p")
+            .with_created_ms(5_000),
+    ]);
+    let kids = h.app.sessions.sessions.children_of("p");
+    assert_eq!(
+        kids.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+        vec!["ses_aaa", "ses_zzz"],
+        "same-ms ties must fall back to id for a stable order",
+    );
+}
+
+#[test]
+fn children_of_places_timestampless_entries_after_timestamped() {
+    let mut h = Harness::new(80, 24);
+    h.app.sessions.set_sessions(vec![
+        SessionEntry::new("p", "Parent", "now"),
+        SessionEntry::new("no-ts", "no timestamp", "now").with_parent("p"),
+        SessionEntry::new("with-ts", "has timestamp", "now")
+            .with_parent("p")
+            .with_created_ms(1_000),
+    ]);
+    let kids = h.app.sessions.sessions.children_of("p");
+    assert_eq!(
+        kids.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+        vec!["with-ts", "no-ts"],
+        "entries without a creation timestamp must sort last",
+    );
+}
+
+#[test]
+fn children_of_filters_out_unrelated_sessions() {
+    let mut h = Harness::new(80, 24);
+    h.app.sessions.set_sessions(vec![
+        SessionEntry::new("p", "Parent", "now"),
+        SessionEntry::new("c-a", "Child A", "now")
+            .with_parent("p")
+            .with_created_ms(1_000),
+        SessionEntry::new("c-b", "Child B", "now")
+            .with_parent("p")
+            .with_created_ms(2_000),
+        SessionEntry::new("other", "Other root", "now"),
+        SessionEntry::new("grand", "Grandchild", "now")
+            .with_parent("c-a")
+            .with_created_ms(3_000),
+    ]);
+    let kids = h.app.sessions.sessions.children_of("p");
+    assert_eq!(
+        kids.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+        vec!["c-a", "c-b"],
     );
 }
 

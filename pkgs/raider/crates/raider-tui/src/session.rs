@@ -29,6 +29,7 @@ pub struct SessionEntry {
     pub busy: bool,
     pub status: SessionStatus,
     pub parent_id: Option<String>,
+    pub created_ms: Option<i64>,
 }
 
 impl SessionEntry {
@@ -45,6 +46,7 @@ impl SessionEntry {
             busy: false,
             status: SessionStatus::Idle,
             parent_id: None,
+            created_ms: None,
         }
     }
 
@@ -58,6 +60,11 @@ impl SessionEntry {
         if !p.is_empty() {
             self.parent_id = Some(p);
         }
+        self
+    }
+
+    pub fn with_created_ms(mut self, created_ms: i64) -> Self {
+        self.created_ms = Some(created_ms);
         self
     }
 
@@ -99,7 +106,12 @@ impl SessionList {
             .iter()
             .filter(|e| e.parent_id.as_deref() == Some(parent_id))
             .collect();
-        out.sort_by(|a, b| a.id.cmp(&b.id));
+        out.sort_by(|a, b| {
+            a.created_ms
+                .unwrap_or(i64::MAX)
+                .cmp(&b.created_ms.unwrap_or(i64::MAX))
+                .then_with(|| a.id.cmp(&b.id))
+        });
         out
     }
 

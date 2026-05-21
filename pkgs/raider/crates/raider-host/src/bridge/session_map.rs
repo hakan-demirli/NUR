@@ -21,6 +21,9 @@ pub fn session_to_entry(s: &Session, current_id: Option<&str>) -> SessionEntry {
     if let (Some(_), Some(_)) = (&s.parent_id, current_id) {
         entry = entry.with_fork("(fork)".to_string());
     }
+    if let Some(created) = s.time.created {
+        entry = entry.with_created_ms(created);
+    }
     entry
 }
 
