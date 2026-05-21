@@ -151,10 +151,11 @@ impl MessageStore {
         marker: CompactionMarker,
         now_hhmm: impl Fn() -> String,
     ) -> bool {
-        if !self.compaction_message_ids.insert(message_id) {
+        if !self.compaction_message_ids.insert(message_id.clone()) {
             return false;
         }
         let mut host_msg = action::HostMessage::user(String::new());
+        host_msg.server_id = Some(message_id);
         host_msg.compaction = Some(marker);
         let m = self.host_to_tui_message(host_msg, &now_hhmm);
         self.messages.push(m);

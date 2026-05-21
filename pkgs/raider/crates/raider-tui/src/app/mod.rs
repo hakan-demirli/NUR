@@ -1267,20 +1267,32 @@ impl App {
             let Some(sid) = m.server_id.as_ref() else {
                 continue;
             };
-            let preview: String = m
-                .content
-                .lines()
-                .next()
-                .unwrap_or("")
-                .chars()
-                .take(120)
-                .collect();
-            let title = if preview.trim().is_empty() {
-                "(empty message)".to_string()
+            let (title, description) = if let Some(marker) = m.compaction {
+                let title = if marker.auto {
+                    "Auto Compaction".to_string()
+                } else {
+                    "Compaction".to_string()
+                };
+                (title, Some("Fork at this compaction point".to_string()))
             } else {
-                preview
+                let preview: String = m
+                    .content
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(120)
+                    .collect();
+                let title = if preview.trim().is_empty() {
+                    "(empty message)".to_string()
+                } else {
+                    preview
+                };
+                (title, None)
             };
-            user_msgs.push(DialogOption::new(title, sid.clone()));
+            let mut opt = DialogOption::new(title, sid.clone());
+            opt.description = description;
+            user_msgs.push(opt);
         }
         user_msgs.reverse();
         options.extend(user_msgs);

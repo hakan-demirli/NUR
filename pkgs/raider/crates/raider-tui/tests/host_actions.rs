@@ -168,3 +168,61 @@ fn host_mark_compaction_auto_flag_changes_title() {
         "auto compaction divider must show `Auto Compaction` title; snap:\n{snap}",
     );
 }
+
+#[test]
+fn host_mark_compaction_stamps_server_id_on_synthetic_message() {
+    use raider_tui::model::CompactionMarker;
+    let mut h = Harness::new(120, 24);
+    h.dispatch(Action::Host(HostAction::MarkCompaction {
+        message_id: "msg-comp-stamped".into(),
+        marker: CompactionMarker { auto: false },
+    }));
+    let comp = h
+        .app
+        .messages
+        .iter()
+        .find(|m| m.compaction.is_some())
+        .expect("compaction message must be inserted into the store");
+    assert_eq!(
+        comp.server_id.as_deref(),
+        Some("msg-comp-stamped"),
+        "mark_compaction must stamp the synthetic message's server_id with the \
+         opencode message id so the fork picker can use it as an anchor",
+    );
+    assert!(
+        comp.content.is_empty(),
+        "compaction synthetic row stays content-empty; the renderer short-circuits \
+         it to a divider via the compaction marker, not via content",
+    );
+}
+
+#[test]
+fn host_mark_compaction_idempotent_with_server_id_stamp() {
+    use raider_tui::model::CompactionMarker;
+    let mut h = Harness::new(120, 24);
+    h.dispatch(Action::Host(HostAction::MarkCompaction {
+        message_id: "msg-comp-dup-2".into(),
+        marker: CompactionMarker { auto: false },
+    }));
+    h.dispatch(Action::Host(HostAction::MarkCompaction {
+        message_id: "msg-comp-dup-2".into(),
+        marker: CompactionMarker { auto: false },
+    }));
+    let comp_rows: Vec<_> = h
+        .app
+        .messages
+        .iter()
+        .filter(|m| m.compaction.is_some())
+        .collect();
+    assert_eq!(
+        comp_rows.len(),
+        1,
+        "duplicate MarkCompaction with the same id must still produce a single row \
+         even after the server_id stamp",
+    );
+    assert_eq!(
+        comp_rows[0].server_id.as_deref(),
+        Some("msg-comp-dup-2"),
+        "the surviving (deduped) row must carry the server_id stamp",
+    );
+}

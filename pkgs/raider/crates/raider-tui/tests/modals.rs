@@ -709,3 +709,124 @@ fn opening_fork_picker_without_active_session_pushes_system_message_not_dialog()
         "must surface guidance when /fork is run without an active session; snap:\n{snap}",
     );
 }
+
+#[test]
+fn fork_picker_includes_compaction_row_with_recognizable_label() {
+    use raider_tui::dialog::DialogKind;
+    use raider_tui::model::CompactionMarker;
+    let mut h = Harness::new(140, 30);
+    pin_dummy_model(&mut h);
+    seed_fork_session(&mut h);
+    h.dispatch(Action::Host(HostAction::AppendMessage(
+        raider_tui::action::HostMessage::user("pre-compaction prompt").with_server_id("msg-pre"),
+    )));
+    h.dispatch(Action::Host(HostAction::MarkCompaction {
+        message_id: "msg-comp-1".into(),
+        marker: CompactionMarker { auto: false },
+    }));
+
+    h.dispatch(Action::View(ViewAction::OpenForkPicker));
+    assert_eq!(h.app.dialog_kind(), Some(DialogKind::ForkPicker));
+    let visible = h
+        .app
+        .dialogs
+        .dialog
+        .as_ref()
+        .expect("dialog open")
+        .visible_options();
+    let labels: Vec<&str> = visible.iter().map(|o| o.title.as_str()).collect();
+    assert!(
+        labels.contains(&"Compaction"),
+        "fork picker must surface a `Compaction` row so users can fork to undo /compact; \
+         got: {labels:?}",
+    );
+    assert!(
+        !labels.contains(&"(empty message)"),
+        "compaction rows must NOT be mislabeled as `(empty message)`; got: {labels:?}",
+    );
+}
+
+#[test]
+fn fork_picker_compaction_row_uses_auto_label_when_auto_true() {
+    use raider_tui::model::CompactionMarker;
+    let mut h = Harness::new(140, 30);
+    pin_dummy_model(&mut h);
+    seed_fork_session(&mut h);
+    h.dispatch(Action::Host(HostAction::MarkCompaction {
+        message_id: "msg-auto-comp".into(),
+        marker: CompactionMarker { auto: true },
+    }));
+    h.dispatch(Action::View(ViewAction::OpenForkPicker));
+    let visible = h
+        .app
+        .dialogs
+        .dialog
+        .as_ref()
+        .expect("dialog open")
+        .visible_options();
+    let labels: Vec<&str> = visible.iter().map(|o| o.title.as_str()).collect();
+    assert!(
+        labels.contains(&"Auto Compaction"),
+        "auto compaction rows must be labeled `Auto Compaction` to match the in-chat divider; \
+         got: {labels:?}",
+    );
+}
+
+#[test]
+fn confirming_fork_picker_compaction_row_emits_fork_with_compaction_message_id() {
+    use raider_tui::model::CompactionMarker;
+    let mut h = Harness::new(140, 30);
+    pin_dummy_model(&mut h);
+    seed_fork_session(&mut h);
+    h.dispatch(Action::Host(HostAction::MarkCompaction {
+        message_id: "msg-comp-fork".into(),
+        marker: CompactionMarker { auto: false },
+    }));
+    h.dispatch(Action::View(ViewAction::OpenForkPicker));
+    h.dispatch(special(KeyCode::Down));
+    h.clear_events();
+    h.dispatch(special(KeyCode::Enter));
+    let fork_event = h.events().iter().find_map(|e| match e {
+        Event::ForkSession { message_id } => Some(message_id.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        fork_event,
+        Some(Some("msg-comp-fork".to_string())),
+        "selecting the compaction row must emit ForkSession with the compaction's \
+         opencode message id; events: {:?}",
+        h.events(),
+    );
+}
+
+#[test]
+fn fork_picker_compaction_row_survives_bulk_refresh_path() {
+    use raider_tui::dialog::DialogKind;
+    use raider_tui::model::CompactionMarker;
+    let mut h = Harness::new(140, 30);
+    pin_dummy_model(&mut h);
+    seed_fork_session(&mut h);
+
+    let mut compaction_msg = raider_tui::action::HostMessage::user(String::new());
+    compaction_msg.server_id = Some("msg-comp-bulk".into());
+    compaction_msg.compaction = Some(CompactionMarker { auto: false });
+    h.dispatch(Action::Host(HostAction::ReplaceMessages(vec![
+        compaction_msg,
+    ])));
+
+    h.dispatch(Action::View(ViewAction::OpenForkPicker));
+    assert_eq!(h.app.dialog_kind(), Some(DialogKind::ForkPicker));
+    let visible = h
+        .app
+        .dialogs
+        .dialog
+        .as_ref()
+        .expect("dialog open")
+        .visible_options();
+    let labels: Vec<&str> = visible.iter().map(|o| o.title.as_str()).collect();
+    assert!(
+        labels.contains(&"Compaction"),
+        "compaction rows from the bulk-refresh path (session reload) must also be \
+         labeled `Compaction`, not `(empty message)`; got: {labels:?}",
+    );
+}
