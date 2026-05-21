@@ -30,20 +30,80 @@ fn sessions_picker_lists_host_supplied_entries() {
 
     h.dispatch(Action::View(ViewAction::Command("/sessions".into())));
     let dialog = h.app.dialogs.dialog.as_ref().expect("picker opens");
-    let titles: Vec<String> = dialog
-        .visible_options()
-        .iter()
-        .map(|o| o.title.clone())
-        .collect();
+    let options = dialog.visible_options();
+    let titles: Vec<String> = options.iter().map(|o| o.title.clone()).collect();
     assert!(
-        titles.iter().any(|t| t.contains("Refactor raider")),
-        "Refactor option visible: {titles:?}"
+        titles.iter().any(|t| t == "Refactor raider"),
+        "Refactor option visible (title is the session title only, date moved to footer): {titles:?}"
     );
     assert!(
-        titles.iter().any(|t| t.contains("Greeting")),
+        titles.iter().any(|t| t == "Greeting"),
         "Greeting option visible: {titles:?}"
     );
+    let footers: Vec<Option<String>> = options.iter().map(|o| o.footer.clone()).collect();
+    assert!(
+        footers.iter().any(|f| f.as_deref() == Some("9:44 PM")),
+        "date label is carried in DialogOption.footer for right-aligned rendering: {footers:?}"
+    );
+    assert!(
+        footers.iter().any(|f| f.as_deref() == Some("6:23 PM")),
+        "all session rows expose footer with the updated label: {footers:?}"
+    );
     assert_eq!(dialog.current_value, "s-2", "current session preselected");
+}
+
+#[test]
+fn session_picker_truncates_long_title_and_keeps_footer_and_spinner_visible() {
+    use raider_tui::SessionEntry;
+    const SPINNER_GLYPHS: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+    let mut h = Harness::new(80, 24);
+    let long_title = "A very long session title that absolutely cannot fit inside a 60 column dialog panel without truncation";
+    h.app.sessions.set_sessions(vec![
+        SessionEntry::new("s-long", long_title, "9:44 PM"),
+        SessionEntry::new("s-short", "Other", "6:23 PM"),
+    ]);
+    h.app.sessions.set_session_busy("s-long", true);
+
+    h.dispatch(Action::View(ViewAction::OpenSessionPicker));
+    let snap = h.snapshot();
+
+    assert!(
+        !snap.contains(long_title),
+        "expected truncated title (the full string must not fit), snap:\n{snap}"
+    );
+    assert!(
+        snap.contains('…'),
+        "truncated title should be marked with an ellipsis, snap:\n{snap}"
+    );
+
+    let row_y = snap
+        .lines()
+        .position(|l| l.contains("9:44 PM"))
+        .unwrap_or_else(|| panic!("session row with date label must remain visible:\n{snap}"))
+        as u16;
+
+    let buf = h.terminal.backend().buffer();
+    let row_cells: Vec<String> = (0..buf.area.width)
+        .map(|x| buf[(x, row_y)].symbol().to_string())
+        .collect();
+
+    assert!(
+        row_cells.iter().any(|c| SPINNER_GLYPHS.iter().any(|g| c == g)),
+        "spinner glyph must remain inside the row when the title is too long; row was {row_cells:?}"
+    );
+
+    let date_col = row_cells
+        .windows(7)
+        .position(|w| w.iter().map(|s| s.as_str()).collect::<String>() == "9:44 PM")
+        .expect("date label '9:44 PM' present as contiguous cells in the row")
+        as u16;
+    let panel_right_edge = buf.area.width.saturating_sub(1);
+    assert!(
+        date_col + 7 <= panel_right_edge,
+        "date label must stay inside the panel (col {date_col}..{} <= edge {panel_right_edge})",
+        date_col + 7
+    );
 }
 
 #[test]

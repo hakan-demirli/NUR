@@ -4,6 +4,7 @@ use ratatui::widgets::{Block, Clear, List, ListItem, Paragraph};
 
 use crate::app::App;
 use crate::dialog::{DialogKind, DialogPayload};
+use crate::ui::path::truncate_text_right_ellipsis;
 use crate::ui::spinner::spinner_frame;
 
 use super::plugin_alert::render_plugin_alert_dialog;
@@ -112,6 +113,7 @@ pub(crate) fn render_dialog(f: &mut Frame, app: &mut App, screen: Rect) {
     let spinner_glyph = spinner_frame();
     let selected_idx = dialog.list_state.selected();
     let has_visible_sections = visible.iter().any(|o| o.is_header);
+    let row_width = rect.width.saturating_sub(2) as usize;
     let items: Vec<ListItem> = visible
         .iter()
         .enumerate()
@@ -129,19 +131,32 @@ pub(crate) fn render_dialog(f: &mut Frame, app: &mut App, screen: Rect) {
                     .style(Style::default().bg(theme.background_panel));
             }
             let is_selected_row = selected_idx == Some(i);
-            let is_current = !opt.value.is_empty() && opt.value == dialog.initial_value;
-            let marker = if has_state_marker && is_current {
-                let fg = if is_selected_row {
-                    theme.selected_list_item_text
-                } else {
-                    theme.primary
-                };
-                Span::styled("● ", Style::default().fg(fg))
-            } else if has_state_marker {
-                Span::raw("  ")
+            let row_bg = if is_selected_row {
+                theme.primary
             } else {
-                Span::raw("")
+                theme.background_panel
             };
+            let is_current = !opt.value.is_empty() && opt.value == dialog.initial_value;
+            let marker_text: &str = if has_state_marker && is_current {
+                "● "
+            } else if has_state_marker {
+                "  "
+            } else {
+                ""
+            };
+            let marker_fg = if is_selected_row {
+                theme.selected_list_item_text
+            } else {
+                theme.primary
+            };
+            let marker = if marker_text.is_empty() {
+                Span::raw("")
+            } else if has_state_marker && is_current {
+                Span::styled(marker_text, Style::default().fg(marker_fg).bg(row_bg))
+            } else {
+                Span::styled(marker_text, Style::default().bg(row_bg))
+            };
+            let marker_width = marker_text.chars().count();
             let title_fg = if opt.disabled {
                 theme.text_muted
             } else if is_selected_row {
@@ -149,52 +164,105 @@ pub(crate) fn render_dialog(f: &mut Frame, app: &mut App, screen: Rect) {
             } else {
                 theme.text
             };
-            let trailing: Vec<Span<'_>> = if is_session_picker
+            let muted_fg = if is_selected_row {
+                theme.selected_list_item_text
+            } else {
+                theme.text_muted
+            };
+
+            let has_spinner = is_session_picker
                 && busy_lookup
                     .get(opt.value.as_str())
                     .copied()
-                    .unwrap_or(false)
-            {
-                let bg = if is_selected_row {
-                    theme.primary
-                } else {
-                    theme.background_panel
-                };
-                vec![
-                    Span::raw(" "),
-                    Span::styled(
-                        spinner_glyph.to_string(),
-                        Style::default().fg(theme.accent).bg(bg),
-                    ),
-                ]
+                    .unwrap_or(false);
+            let spinner_width = if has_spinner { 2 } else { 0 };
+
+            let footer_text = opt.footer.as_deref().filter(|s| !s.is_empty());
+            let footer_width = footer_text.map(|s| s.chars().count() + 5).unwrap_or(0);
+
+            let auto_fit = footer_width > 0 || spinner_width > 0;
+
+            let description = opt
+                .description
+                .as_ref()
+                .filter(|s| !s.is_empty())
+                .map(|s| format!("  {}", s));
+            let category = opt
+                .category
+                .as_ref()
+                .filter(|s| !s.is_empty())
+                .filter(|_| !has_visible_sections)
+                .map(|s| format!("  · {}", s));
+            let disabled_hint = if opt.disabled { "  disabled" } else { "" };
+
+            let (title_display, pad_width) = if auto_fit {
+                let description_width = description
+                    .as_deref()
+                    .map(|s| s.chars().count())
+                    .unwrap_or(0);
+                let category_width = category.as_deref().map(|s| s.chars().count()).unwrap_or(0);
+                let disabled_width = disabled_hint.chars().count();
+                let reserved = marker_width
+                    + description_width
+                    + category_width
+                    + disabled_width
+                    + footer_width
+                    + spinner_width;
+                let title_budget = row_width.saturating_sub(reserved).max(1);
+                let truncated = truncate_text_right_ellipsis(&opt.title, title_budget);
+                let title_width = truncated.chars().count();
+                let pad = row_width
+                    .saturating_sub(marker_width)
+                    .saturating_sub(title_width)
+                    .saturating_sub(description_width)
+                    .saturating_sub(category_width)
+                    .saturating_sub(disabled_width)
+                    .saturating_sub(footer_width)
+                    .saturating_sub(spinner_width);
+                (truncated, pad)
             } else {
-                Vec::new()
+                (opt.title.clone(), 0)
             };
-            let mut spans = vec![
-                marker,
-                Span::styled(opt.title.clone(), Style::default().fg(title_fg)),
-            ];
-            if let Some(description) = opt.description.as_ref().filter(|s| !s.is_empty()) {
+
+            let mut spans: Vec<Span<'_>> = Vec::new();
+            if !marker_text.is_empty() {
+                spans.push(marker);
+            }
+            spans.push(Span::styled(
+                title_display,
+                Style::default().fg(title_fg).bg(row_bg),
+            ));
+            if let Some(desc) = description {
+                spans.push(Span::styled(desc, Style::default().fg(muted_fg).bg(row_bg)));
+            }
+            if let Some(cat) = category {
+                spans.push(Span::styled(cat, Style::default().fg(muted_fg).bg(row_bg)));
+            }
+            if !disabled_hint.is_empty() {
                 spans.push(Span::styled(
-                    format!("  {}", description),
-                    Style::default().fg(theme.text_muted),
+                    disabled_hint.to_string(),
+                    Style::default().fg(muted_fg).bg(row_bg),
                 ));
             }
-            if let Some(category) = opt.category.as_ref().filter(|s| !s.is_empty()) {
-                if !has_visible_sections {
-                    spans.push(Span::styled(
-                        format!("  · {}", category),
-                        Style::default().fg(theme.text_muted),
-                    ));
-                }
-            }
-            if opt.disabled {
+            if auto_fit && pad_width > 0 {
                 spans.push(Span::styled(
-                    "  disabled",
-                    Style::default().fg(theme.text_muted),
+                    " ".repeat(pad_width),
+                    Style::default().bg(row_bg),
                 ));
             }
-            spans.extend(trailing);
+            if let Some(footer) = footer_text {
+                spans.push(Span::styled(
+                    format!("  ·  {}", footer),
+                    Style::default().fg(muted_fg).bg(row_bg),
+                ));
+            }
+            if has_spinner {
+                spans.push(Span::styled(" ", Style::default().bg(row_bg)));
+                spans.push(Span::styled(
+                    spinner_glyph.to_string(),
+                    Style::default().fg(theme.accent).bg(row_bg),
+                ));
+            }
             ListItem::new(Line::from(spans))
         })
         .collect();

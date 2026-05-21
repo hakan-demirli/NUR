@@ -172,10 +172,9 @@ impl SessionState {
             options.push(DialogOption::header("Pinned"));
             for id in &pinned_existing {
                 if let Some(s) = self.sessions.entries.iter().find(|s| &s.id == id) {
-                    options.push(DialogOption::new(
-                        format!("{}  ·  {}", s.display_title(), s.updated_label),
-                        s.id.clone(),
-                    ));
+                    let mut opt = DialogOption::new(s.display_title(), s.id.clone());
+                    opt.footer = Some(s.updated_label.clone());
+                    options.push(opt);
                 }
             }
         }
@@ -189,10 +188,9 @@ impl SessionState {
                 options.push(DialogOption::header("Sessions"));
                 emitted_others = true;
             }
-            options.push(DialogOption::new(
-                format!("{}  ·  {}", s.display_title(), s.updated_label),
-                s.id.clone(),
-            ));
+            let mut opt = DialogOption::new(s.display_title(), s.id.clone());
+            opt.footer = Some(s.updated_label.clone());
+            options.push(opt);
         }
         options
     }

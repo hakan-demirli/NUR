@@ -1062,6 +1062,7 @@ impl App {
                 value: c.name.clone(),
                 description: c.description.clone(),
                 category: c.category.clone(),
+                footer: None,
                 disabled: false,
                 is_header: false,
             }
@@ -1355,6 +1356,7 @@ impl App {
                 value: option.value,
                 description: option.description,
                 category: option.category,
+                footer: None,
                 disabled: option.disabled,
                 is_header: false,
             })

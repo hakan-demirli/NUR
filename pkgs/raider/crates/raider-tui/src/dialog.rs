@@ -127,6 +127,7 @@ pub struct DialogOption {
     pub value: String,
     pub description: Option<String>,
     pub category: Option<String>,
+    pub footer: Option<String>,
     pub disabled: bool,
     pub is_header: bool,
 }
@@ -138,6 +139,7 @@ impl DialogOption {
             value: value.into(),
             description: None,
             category: None,
+            footer: None,
             disabled: false,
             is_header: false,
         }
@@ -149,6 +151,7 @@ impl DialogOption {
             value: String::new(),
             description: None,
             category: None,
+            footer: None,
             disabled: true,
             is_header: true,
         }

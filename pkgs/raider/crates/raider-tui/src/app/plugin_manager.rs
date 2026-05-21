@@ -164,6 +164,7 @@ fn plugin_manager_options(plugins: &[PluginInfo]) -> Vec<DialogOption> {
                     .to_string(),
             ),
             category: None,
+            footer: None,
             disabled: true,
             is_header: false,
         }];
@@ -231,6 +232,7 @@ fn plugin_to_option(plugin: &PluginInfo) -> DialogOption {
         value: plugin.id.clone(),
         description: Some(description_parts.join("  ·  ")),
         category: Some(plugin.kind.label().to_string()),
+        footer: None,
         disabled: false,
         is_header: false,
     }
