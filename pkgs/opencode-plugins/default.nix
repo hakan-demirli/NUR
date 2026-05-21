@@ -57,17 +57,17 @@ let
     };
   });
 
-  opencode-office = python3Packages.buildPythonApplication {
-    pname = "opencode-office";
+  opencode-goal = python3Packages.buildPythonApplication {
+    pname = "opencode-goal";
     version = "0.1.0";
     pyproject = true;
 
-    src = ./plugins/office/runtime;
+    src = ./plugins/goal/runtime;
 
     build-system = [ python3Packages.setuptools ];
 
     meta = {
-      description = "OpenCode worker/judge office daemon";
+      description = "OpenCode /goal and /loop orchestrator daemon";
       license = lib.licenses.mit;
       platforms = lib.platforms.linux;
     };
@@ -90,10 +90,7 @@ stdenvNoCC.mkDerivation {
     chmod +x "$out/bin/claude2"
 
     mkdir -p "$out/plugins"
-    cp -R plugins/office/opencode "$out/plugins/office"
     cp plugins/claude-auth/opencode/opencode-claude-auth-multi.js "$out/plugins/opencode-claude-auth-multi.js"
-    substituteInPlace "$out/plugins/office/tui.tsx" \
-      --replace-fail "__OPENCODE_OFFICE_BIN__" "${opencode-office}/bin/opencode-office"
     cp -R "${opencode-claude-auth}" "$out/plugins/opencode-claude-auth-multi"
     substituteInPlace "$out/plugins/opencode-claude-auth-multi/opencode-claude-auth.js" \
       --replace-fail "__OPENCODE_CLAUDE_AUTH_CLAUDE__" \
@@ -101,13 +98,23 @@ stdenvNoCC.mkDerivation {
       --replace-fail "__OPENCODE_CLAUDE_AUTH_CLAUDE2__" \
       "$out/bin/claude2"
 
+    mkdir -p "$out/plugins/goal"
+    cp plugins/goal/goal.lua "$out/plugins/goal/goal.lua"
+    cp plugins/goal/loop.lua "$out/plugins/goal/loop.lua"
+    substituteInPlace "$out/plugins/goal/goal.lua" \
+      --replace-fail "__OPENCODE_GOAL_BIN__" "${opencode-goal}/bin/opencode-goal"
+    substituteInPlace "$out/plugins/goal/loop.lua" \
+      --replace-fail "__OPENCODE_GOAL_BIN__" "${opencode-goal}/bin/opencode-goal"
+
     runHook postInstall
   '';
 
   passthru.pluginsDir = "${placeholder "out"}/plugins";
   passthru.claude2 = "${placeholder "out"}/bin/claude2";
   passthru.opencode-claude-auth = opencode-claude-auth;
-  passthru.opencode-office = opencode-office;
+  passthru.opencode-goal = opencode-goal;
+  passthru.goalLua = "${placeholder "out"}/plugins/goal/goal.lua";
+  passthru.loopLua = "${placeholder "out"}/plugins/goal/loop.lua";
 
   meta = {
     description = "Personal OpenCode plugin collection";

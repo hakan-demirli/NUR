@@ -12,7 +12,7 @@ from typing import Any
 
 from .logging import get_logger, log_kv
 
-_log = get_logger("office.client")
+_log = get_logger("goal.client")
 
 
 class OpenCodeError(RuntimeError):
