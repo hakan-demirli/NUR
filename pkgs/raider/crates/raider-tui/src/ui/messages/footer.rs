@@ -47,7 +47,14 @@ pub(crate) fn assistant_footer_line<'a>(
         ));
     }
 
-    if let Some(d) = msg.duration {
+    let live_duration = msg.duration.or_else(|| {
+        if msg.is_streaming {
+            msg.started_at.map(|t| t.elapsed())
+        } else {
+            None
+        }
+    });
+    if let Some(d) = live_duration {
         spans.push(Span::styled(
             " · ",
             Style::default().fg(theme.text_muted).bg(bg_color),
@@ -56,6 +63,19 @@ pub(crate) fn assistant_footer_line<'a>(
             crate::model::format_duration(d),
             text_style.add_modifier(Modifier::DIM),
         ));
+    }
+
+    if msg.output_tokens > 0 {
+        spans.push(Span::styled(
+            " · ",
+            Style::default().fg(theme.text_muted).bg(bg_color),
+        ));
+        let label = if msg.tokens_approx {
+            format!("~{} tokens", msg.output_tokens)
+        } else {
+            format!("{} tokens", msg.output_tokens)
+        };
+        spans.push(Span::styled(label, text_style.add_modifier(Modifier::DIM)));
     }
 
     if msg.interrupted {

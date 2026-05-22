@@ -1089,10 +1089,17 @@ fn message_updated_with_completed_emits_meta_patch() {
             model,
             provider_id,
             duration,
-        }) => Some((agent.clone(), model.clone(), provider_id.clone(), *duration)),
+            output_tokens,
+        }) => Some((
+            agent.clone(),
+            model.clone(),
+            provider_id.clone(),
+            *duration,
+            *output_tokens,
+        )),
         _ => None,
     });
-    let (agent, model, provider_id, duration) = meta_patch
+    let (agent, model, provider_id, duration, _output_tokens) = meta_patch
         .expect("HostUpdateLastAssistantMeta must be emitted with a finalised assistant message");
     assert_eq!(agent.as_deref(), Some("build"));
     assert_eq!(model.as_deref(), Some("big-pickle"));
@@ -1112,6 +1119,269 @@ fn message_updated_with_completed_emits_meta_patch() {
         meta_idx < done_idx,
         "meta patch must precede AssistantDone (actions: {:?})",
         t.actions,
+    );
+}
+
+#[test]
+fn message_updated_with_completed_carries_exact_output_token_total() {
+    use raider_opencode::events::MessageUpdatedProps;
+    use raider_opencode::types::message::{Message as WireMsg, MessageTime, MessageWithParts};
+    let mut mirror = PartMirror::new();
+    let active = SessionId::new("s");
+    let info = WireMsg {
+        id: MessageId::new("msg_t"),
+        session_id: Some(SessionId::new("s")),
+        role: MessageRole::Assistant,
+        time: MessageTime {
+            created: Some(1_000),
+            completed: Some(2_000),
+        },
+        extra: {
+            let mut e = serde_json::Map::new();
+            e.insert(
+                "tokens".into(),
+                serde_json::json!({
+                    "input": 12_000,
+                    "output": 800,
+                    "reasoning": 98,
+                    "cache": { "read": 4_000, "write": 50 },
+                }),
+            );
+            e
+        },
+    };
+    let ev = ServerEvent::MessageUpdated(MessageUpdatedProps {
+        info: MessageWithParts {
+            info,
+            parts: vec![],
+        },
+    });
+    let t = translate(ev, Some(&active), &mut mirror);
+    let total = t.actions.iter().find_map(|a| match a {
+        Action::Host(HostAction::UpdateLastAssistantMeta { output_tokens, .. }) => *output_tokens,
+        _ => None,
+    });
+    assert_eq!(
+        total,
+        Some(898),
+        "output(800) + reasoning(98) must be forwarded; actions={:?}",
+        t.actions,
+    );
+}
+
+#[test]
+fn streaming_tool_part_emits_assistant_token_progress_on_first_frame() {
+    use raider_opencode::events::MessagePartUpdatedProps;
+    use raider_opencode::types::common::PartId;
+    use raider_opencode::types::message::{MessagePart, ToolPart, ToolState};
+    let mut mirror = PartMirror::new();
+    let active = SessionId::new("s");
+    let part_id = PartId::new("prt_write_1");
+    let ev = ServerEvent::MessagePartUpdated(MessagePartUpdatedProps {
+        session_id: SessionId::new("s"),
+        message_id: Some(MessageId::new("m")),
+        part: MessagePart::Tool(ToolPart {
+            id: part_id.clone(),
+            tool_name: "write".into(),
+            state: ToolState {
+                status: "running".into(),
+                input: serde_json::json!({
+                    "filePath": "foo.txt",
+                    "content": "lorem ipsum dolor sit amet",
+                }),
+                output: String::new(),
+                title: "Write".into(),
+                metadata: serde_json::Value::Null,
+                error: None,
+            },
+            message_id: None,
+            extra: serde_json::Map::new(),
+        }),
+        part_id: None,
+    });
+    let t = translate(ev, Some(&active), &mut mirror);
+    let progress = t.actions.iter().find_map(|a| match a {
+        Action::Host(HostAction::AssistantTokenProgress { tokens, .. }) => Some(*tokens),
+        _ => None,
+    });
+    let credited = progress.expect("first tool snapshot must credit token progress");
+    assert!(
+        credited >= 10,
+        "first frame should credit chars/4 tokens for the streamed tool input; got {credited}",
+    );
+}
+
+#[test]
+fn streaming_tool_part_credits_only_growth_on_subsequent_frames() {
+    use raider_opencode::events::MessagePartUpdatedProps;
+    use raider_opencode::types::common::PartId;
+    use raider_opencode::types::message::{MessagePart, ToolPart, ToolState};
+    let mut mirror = PartMirror::new();
+    let active = SessionId::new("s");
+    let part_id = PartId::new("prt_write_2");
+    let make_frame = |content: &str| {
+        ServerEvent::MessagePartUpdated(MessagePartUpdatedProps {
+            session_id: SessionId::new("s"),
+            message_id: Some(MessageId::new("m")),
+            part: MessagePart::Tool(ToolPart {
+                id: part_id.clone(),
+                tool_name: "write".into(),
+                state: ToolState {
+                    status: "running".into(),
+                    input: serde_json::json!({
+                        "filePath": "foo.txt",
+                        "content": content,
+                    }),
+                    output: String::new(),
+                    title: String::new(),
+                    metadata: serde_json::Value::Null,
+                    error: None,
+                },
+                message_id: None,
+                extra: serde_json::Map::new(),
+            }),
+            part_id: None,
+        })
+    };
+    let t1 = translate(make_frame("abcd"), Some(&active), &mut mirror);
+    let credited_1 = t1
+        .actions
+        .iter()
+        .find_map(|a| match a {
+            Action::Host(HostAction::AssistantTokenProgress { tokens, .. }) => Some(*tokens),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let big = "x".repeat(400);
+    let t2 = translate(make_frame(&big), Some(&active), &mut mirror);
+    let credited_2 = t2
+        .actions
+        .iter()
+        .find_map(|a| match a {
+            Action::Host(HostAction::AssistantTokenProgress { tokens, .. }) => Some(*tokens),
+            _ => None,
+        })
+        .unwrap_or(0);
+    assert!(credited_1 > 0, "first frame must credit something");
+    assert!(
+        credited_2 >= 90,
+        "second frame must credit ~chars/4 of the growth (~400 chars → ~100 tokens); got {credited_2}",
+    );
+    let t3 = translate(make_frame(&big), Some(&active), &mut mirror);
+    let credited_3 = t3
+        .actions
+        .iter()
+        .any(|a| matches!(a, Action::Host(HostAction::AssistantTokenProgress { .. })));
+    assert!(
+        !credited_3,
+        "identical snapshot must not double-count; actions={:?}",
+        t3.actions,
+    );
+}
+
+#[test]
+fn message_part_delta_for_tool_input_field_credits_live_counter_and_blocks_double_count() {
+    use raider_opencode::events::{MessagePartDeltaProps, MessagePartUpdatedProps};
+    use raider_opencode::types::common::PartId;
+    use raider_opencode::types::message::{MessagePart, ToolPart, ToolState};
+    let mut mirror = PartMirror::new();
+    let active = SessionId::new("s");
+    let msg_id = MessageId::new("m");
+    let part_id = PartId::new("prt_write_delta");
+    mirror.remember_kind(
+        msg_id.clone(),
+        part_id.clone(),
+        super::mirror::PartKind::Tool,
+    );
+
+    let delta_chars = 200usize;
+    let delta_ev = ServerEvent::MessagePartDelta(MessagePartDeltaProps {
+        session_id: SessionId::new("s"),
+        message_id: msg_id.clone(),
+        part_id: part_id.clone(),
+        field: "input".into(),
+        delta: "x".repeat(delta_chars),
+    });
+    let t1 = translate(delta_ev, Some(&active), &mut mirror);
+    let credited = t1.actions.iter().find_map(|a| match a {
+        Action::Host(HostAction::AssistantTokenProgress { tokens, .. }) => Some(*tokens),
+        _ => None,
+    });
+    assert_eq!(
+        credited,
+        Some(50),
+        "raw delta of 200 chars must credit ceil(200/4)=50 approx tokens; actions={:?}",
+        t1.actions,
+    );
+
+    let snapshot_ev = ServerEvent::MessagePartUpdated(MessagePartUpdatedProps {
+        session_id: SessionId::new("s"),
+        message_id: Some(msg_id),
+        part: MessagePart::Tool(ToolPart {
+            id: part_id,
+            tool_name: "write".into(),
+            state: ToolState {
+                status: "running".into(),
+                input: serde_json::json!({ "content": "x".repeat(delta_chars - 30) }),
+                output: String::new(),
+                title: String::new(),
+                metadata: serde_json::Value::Null,
+                error: None,
+            },
+            message_id: None,
+            extra: serde_json::Map::new(),
+        }),
+        part_id: None,
+    });
+    let t2 = translate(snapshot_ev, Some(&active), &mut mirror);
+    let extra = t2
+        .actions
+        .iter()
+        .any(|a| matches!(a, Action::Host(HostAction::AssistantTokenProgress { .. })));
+    assert!(
+        !extra,
+        "snapshot following a credited delta must not double-count; actions={:?}",
+        t2.actions,
+    );
+}
+
+#[test]
+fn message_updated_with_completed_emits_meta_patch_without_tokens_when_extra_absent() {
+    use raider_opencode::events::MessageUpdatedProps;
+    use raider_opencode::types::message::{Message as WireMsg, MessageTime, MessageWithParts};
+    let mut mirror = PartMirror::new();
+    let active = SessionId::new("s");
+    let info = WireMsg {
+        id: MessageId::new("msg_no_tokens"),
+        session_id: Some(SessionId::new("s")),
+        role: MessageRole::Assistant,
+        time: MessageTime {
+            created: Some(1_000),
+            completed: Some(1_500),
+        },
+        extra: {
+            let mut e = serde_json::Map::new();
+            e.insert("agent".into(), serde_json::json!("build"));
+            e
+        },
+    };
+    let ev = ServerEvent::MessageUpdated(MessageUpdatedProps {
+        info: MessageWithParts {
+            info,
+            parts: vec![],
+        },
+    });
+    let t = translate(ev, Some(&active), &mut mirror);
+    let total = t.actions.iter().find_map(|a| match a {
+        Action::Host(HostAction::UpdateLastAssistantMeta { output_tokens, .. }) => {
+            Some(*output_tokens)
+        }
+        _ => None,
+    });
+    assert_eq!(
+        total,
+        Some(None),
+        "meta patch must carry output_tokens: None when wire has no tokens object",
     );
 }
 

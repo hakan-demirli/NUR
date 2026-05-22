@@ -51,6 +51,15 @@ pub struct Message {
     pub duration: Option<std::time::Duration>,
 
     #[serde(default)]
+    pub output_tokens: u64,
+
+    #[serde(default)]
+    pub tokens_approx: bool,
+
+    #[serde(skip)]
+    pub started_at: Option<std::time::Instant>,
+
+    #[serde(default)]
     pub error: Option<String>,
 
     #[serde(skip)]
@@ -76,6 +85,12 @@ pub struct Message {
 
     #[serde(skip)]
     pub(crate) version: Version,
+
+    #[serde(skip)]
+    pub token: u64,
+
+    #[serde(default)]
+    pub queued_under: Option<u64>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -163,6 +178,9 @@ impl Default for Message {
             model: None,
             provider_id: None,
             duration: None,
+            output_tokens: 0,
+            tokens_approx: false,
+            started_at: None,
             error: None,
             tool_calls: Vec::new(),
             parts: Vec::new(),
@@ -173,7 +191,21 @@ impl Default for Message {
             tool_render_cache: std::collections::HashMap::new(),
             part_render_cache: std::collections::HashMap::new(),
             version: Version::default(),
+            token: 0,
+            queued_under: None,
         }
+    }
+}
+
+pub fn approx_tokens(s: &str) -> u64 {
+    approx_tokens_from_chars(s.chars().count() as u64)
+}
+
+pub fn approx_tokens_from_chars(n: u64) -> u64 {
+    if n == 0 {
+        0
+    } else {
+        n.div_ceil(4)
     }
 }
 
@@ -209,6 +241,7 @@ impl Message {
             content: String::new(),
             timestamp: ts.into(),
             is_streaming: true,
+            started_at: Some(std::time::Instant::now()),
             ..Default::default()
         }
     }
@@ -228,6 +261,7 @@ impl Message {
             model,
             provider_id,
             parts: Vec::new(),
+            started_at: Some(std::time::Instant::now()),
             ..Default::default()
         }
     }

@@ -199,6 +199,26 @@ pub(super) fn last_assistant_context_window(
     None
 }
 
+pub(super) fn message_output_tokens(
+    extra: &serde_json::Map<String, serde_json::Value>,
+) -> Option<u64> {
+    let tokens_obj = extra.get("tokens").and_then(|v| v.as_object())?;
+    let output = tokens_obj
+        .get("output")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let reasoning = tokens_obj
+        .get("reasoning")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let total = output.saturating_add(reasoning);
+    if total == 0 {
+        None
+    } else {
+        Some(total)
+    }
+}
+
 pub(crate) fn format_tokens_compact(n: u64) -> String {
     if n < 1_000 {
         return format!("{n}");

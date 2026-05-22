@@ -56,6 +56,11 @@ pub fn message_to_host(m: &MessageWithParts) -> HostMessage {
         }
         _ => None,
     };
+    let output_tokens = if matches!(m.info.role, MessageRole::Assistant) && !is_streaming {
+        super::sidebar::message_output_tokens(&m.info.extra)
+    } else {
+        None
+    };
 
     HostMessage {
         sender,
@@ -68,6 +73,7 @@ pub fn message_to_host(m: &MessageWithParts) -> HostMessage {
         model,
         provider_id,
         duration,
+        output_tokens,
         error,
         interrupted,
         tool_calls,

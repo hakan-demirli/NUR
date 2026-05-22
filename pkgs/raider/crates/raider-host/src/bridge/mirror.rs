@@ -28,6 +28,7 @@ impl PartKind {
 pub struct PartMirror {
     pub(crate) text: HashMap<(MessageId, PartId), String>,
     reasoning: HashMap<(MessageId, PartId), String>,
+    tool_input_max_chars: HashMap<(MessageId, PartId), usize>,
     roles: HashMap<MessageId, raider_opencode::types::message::MessageRole>,
     kinds: HashMap<(MessageId, PartId), PartKind>,
     task_child_session_to_part: HashMap<SessionId, PartId>,
@@ -45,6 +46,7 @@ impl PartMirror {
     pub fn clear(&mut self) {
         self.text.clear();
         self.reasoning.clear();
+        self.tool_input_max_chars.clear();
         self.roles.clear();
         self.kinds.clear();
         self.task_child_session_to_part.clear();
@@ -61,6 +63,8 @@ impl PartMirror {
     pub fn mark_message_complete(&mut self, message_id: &MessageId) {
         self.text.retain(|(mid, _), _| mid != message_id);
         self.reasoning.retain(|(mid, _), _| mid != message_id);
+        self.tool_input_max_chars
+            .retain(|(mid, _), _| mid != message_id);
     }
 
     pub fn forget_session(&mut self, session_id: &SessionId) {
@@ -73,6 +77,7 @@ impl PartMirror {
         for mid in &owned_messages {
             self.text.retain(|(m, _), _| m != mid);
             self.reasoning.retain(|(m, _), _| m != mid);
+            self.tool_input_max_chars.retain(|(m, _), _| m != mid);
             self.kinds.retain(|(m, _), _| m != mid);
             self.roles.remove(mid);
             self.message_to_session.remove(mid);
@@ -180,6 +185,37 @@ impl PartMirror {
         full_text: &str,
     ) -> Option<String> {
         diff_into(&mut self.reasoning, (message_id, part_id), full_text)
+    }
+
+    pub fn diff_tool_input_chars(
+        &mut self,
+        message_id: MessageId,
+        part_id: PartId,
+        new_chars: usize,
+    ) -> usize {
+        let key = (message_id, part_id);
+        let prev = self.tool_input_max_chars.get(&key).copied().unwrap_or(0);
+        if new_chars > prev {
+            self.tool_input_max_chars.insert(key, new_chars);
+            new_chars - prev
+        } else {
+            0
+        }
+    }
+
+    pub fn note_tool_input_chars(
+        &mut self,
+        message_id: MessageId,
+        part_id: PartId,
+        extra_chars: usize,
+    ) {
+        if extra_chars == 0 {
+            return;
+        }
+        let key = (message_id, part_id);
+        let prev = self.tool_input_max_chars.get(&key).copied().unwrap_or(0);
+        self.tool_input_max_chars
+            .insert(key, prev.saturating_add(extra_chars));
     }
 }
 

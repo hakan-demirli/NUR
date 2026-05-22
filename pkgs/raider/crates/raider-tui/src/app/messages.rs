@@ -27,6 +27,9 @@ pub struct MessageStore {
     last_assistant_idx: Option<usize>,
     streaming_assistant_idx: Option<usize>,
     queued_flags_cache: Option<(Version, Vec<bool>)>,
+
+    next_token: u64,
+    token_to_idx: HashMap<u64, usize>,
 }
 
 impl MessageStore {
@@ -44,6 +47,27 @@ impl MessageStore {
             last_assistant_idx: None,
             streaming_assistant_idx: None,
             queued_flags_cache: None,
+            next_token: 1,
+            token_to_idx: HashMap::new(),
+        }
+    }
+
+    fn mint_token(&mut self) -> u64 {
+        let t = self.next_token;
+        self.next_token = self.next_token.saturating_add(1);
+        t
+    }
+
+    pub fn streaming_assistant_token(&self) -> Option<u64> {
+        self.streaming_assistant_idx
+            .and_then(|i| self.messages.get(i))
+            .map(|m| m.token)
+            .filter(|&t| t != 0)
+    }
+
+    fn ensure_token(&mut self, msg: &mut Message) {
+        if msg.token == 0 {
+            msg.token = self.mint_token();
         }
     }
 
@@ -68,6 +92,7 @@ impl MessageStore {
         self.compaction_message_ids.clear();
         self.by_server_id.clear();
         self.tools.clear();
+        self.token_to_idx.clear();
         self.last_assistant_idx = None;
         self.streaming_assistant_idx = None;
         self.bump_store();
@@ -78,6 +103,7 @@ impl MessageStore {
         let compaction_ids = std::mem::take(&mut self.compaction_message_ids);
         self.by_server_id.clear();
         self.tools.clear();
+        self.token_to_idx.clear();
         self.last_assistant_idx = None;
         self.streaming_assistant_idx = None;
         self.bump_store();
@@ -91,10 +117,19 @@ impl MessageStore {
         self.bump_store();
     }
 
-    pub fn push(&mut self, msg: Message) {
+    pub fn push(&mut self, mut msg: Message) {
+        self.ensure_token(&mut msg);
         let idx = self.messages.len();
         self.index_inserted_message(idx, &msg);
         self.messages.push(msg);
+        self.bump_store();
+    }
+
+    pub fn insert(&mut self, idx: usize, mut msg: Message) {
+        let idx = idx.min(self.messages.len());
+        self.ensure_token(&mut msg);
+        self.messages.insert(idx, msg);
+        self.rebuild_indices();
         self.bump_store();
     }
 
@@ -123,6 +158,43 @@ impl MessageStore {
         self.streaming_assistant_idx
     }
 
+    pub fn tick_streaming_assistant(&mut self) -> bool {
+        if self.streaming_assistant_idx.is_none() {
+            return false;
+        }
+        self.bump_store();
+        true
+    }
+
+    pub fn bump_streaming_output_tokens(
+        &mut self,
+        tokens: u64,
+        server_message_id: Option<&str>,
+    ) -> bool {
+        if tokens == 0 {
+            return false;
+        }
+        let idx = server_message_id
+            .and_then(|mid| self.by_server_id.get(mid).copied())
+            .or(self.streaming_assistant_idx);
+        let Some(idx) = idx else {
+            return false;
+        };
+        let Some(msg) = self.messages.get_mut(idx) else {
+            return false;
+        };
+        if msg.sender != Sender::Assistant {
+            return false;
+        }
+        msg.output_tokens = msg.output_tokens.saturating_add(tokens);
+        msg.tokens_approx = true;
+        if msg.started_at.is_none() && msg.duration.is_none() {
+            msg.started_at = Some(std::time::Instant::now());
+        }
+        self.bump_store();
+        true
+    }
+
     pub fn tool_location(&self, id: &str) -> Option<ToolLocation> {
         self.tools.get(id).copied()
     }
@@ -141,13 +213,14 @@ impl MessageStore {
             .unwrap_or(true)
         {
             let mut flags = Vec::with_capacity(self.messages.len());
-            let mut has_streaming_before = false;
             for m in &self.messages {
-                let queued = matches!(m.sender, Sender::User) && has_streaming_before;
+                let queued = m.sender == Sender::User
+                    && m.queued_under
+                        .and_then(|t| self.token_to_idx.get(&t).copied())
+                        .and_then(|i| self.messages.get(i))
+                        .map(|anchor| anchor.is_streaming)
+                        .unwrap_or(false);
                 flags.push(queued);
-                if m.sender == Sender::Assistant && m.is_streaming {
-                    has_streaming_before = true;
-                }
             }
             self.queued_flags_cache = Some((self.version, flags));
         }
@@ -201,6 +274,13 @@ impl MessageStore {
             model: m.model,
             provider_id: m.provider_id,
             duration: m.duration,
+            output_tokens: m.output_tokens.unwrap_or(0),
+            tokens_approx: m.output_tokens.is_none() && m.is_streaming,
+            started_at: if m.is_streaming && m.duration.is_none() {
+                Some(std::time::Instant::now())
+            } else {
+                None
+            },
             error: m.error,
             tool_calls: m.tool_calls,
             parts: m.parts,
@@ -224,7 +304,8 @@ impl MessageStore {
     }
 
     pub fn host_append(&mut self, message: action::HostMessage, now_hhmm: impl Fn() -> String) {
-        let m = self.host_to_tui_message(message, &now_hhmm);
+        let mut m = self.host_to_tui_message(message, &now_hhmm);
+        self.ensure_token(&mut m);
         let idx = self.messages.len();
         self.index_inserted_message(idx, &m);
         self.messages.push(m);
@@ -262,7 +343,8 @@ impl MessageStore {
         let mut host_msg = action::HostMessage::user(String::new());
         host_msg.server_id = Some(message_id);
         host_msg.compaction = Some(marker);
-        let m = self.host_to_tui_message(host_msg, &now_hhmm);
+        let mut m = self.host_to_tui_message(host_msg, &now_hhmm);
+        self.ensure_token(&mut m);
         let idx = self.messages.len();
         self.index_inserted_message(idx, &m);
         self.messages.push(m);
@@ -293,6 +375,13 @@ impl MessageStore {
                     _ => msg.parts.push(HostMessagePart::Text(text.to_string())),
                 }
             }
+            msg.output_tokens = msg
+                .output_tokens
+                .saturating_add(crate::model::approx_tokens(text));
+            msg.tokens_approx = true;
+            if msg.started_at.is_none() && msg.duration.is_none() {
+                msg.started_at = Some(std::time::Instant::now());
+            }
             msg.invalidate_render_cache();
         }
         self.bump_store();
@@ -318,7 +407,11 @@ impl MessageStore {
         if let Some(idx) = self.streaming_assistant_idx {
             return idx;
         }
-        let msg = make_streaming_message();
+        let mut msg = make_streaming_message();
+        if let Some(mid) = server_message_id {
+            msg.server_id = Some(mid.to_string());
+        }
+        self.ensure_token(&mut msg);
         let idx = self.messages.len();
         self.index_inserted_message(idx, &msg);
         self.messages.push(msg);
@@ -555,6 +648,7 @@ impl MessageStore {
         model: Option<String>,
         provider_id: Option<String>,
         duration: Option<std::time::Duration>,
+        output_tokens: Option<u64>,
     ) {
         let target = self.streaming_assistant_idx.or(self.last_assistant_idx);
         if let Some(idx) = target {
@@ -573,6 +667,10 @@ impl MessageStore {
             if let Some(d) = duration {
                 msg.duration = Some(d);
             }
+            if let Some(n) = output_tokens {
+                msg.output_tokens = n;
+                msg.tokens_approx = false;
+            }
             self.bump_message(idx);
         }
     }
@@ -580,6 +678,9 @@ impl MessageStore {
     fn index_inserted_message(&mut self, idx: usize, msg: &Message) {
         if let Some(sid) = msg.server_id.clone() {
             self.by_server_id.insert(sid, idx);
+        }
+        if msg.token != 0 {
+            self.token_to_idx.insert(msg.token, idx);
         }
         for (tool_idx, tool) in msg.tool_calls.iter().enumerate() {
             if let Some(id) = tool.id.clone() {
@@ -626,12 +727,23 @@ impl MessageStore {
     fn rebuild_indices(&mut self) {
         self.by_server_id.clear();
         self.tools.clear();
+        self.token_to_idx.clear();
         self.last_assistant_idx = None;
         self.streaming_assistant_idx = None;
+        let max_existing = self.messages.iter().map(|m| m.token).max().unwrap_or(0);
+        if self.next_token <= max_existing {
+            self.next_token = max_existing.saturating_add(1);
+        }
+        for i in 0..self.messages.len() {
+            if self.messages[i].token == 0 {
+                self.messages[i].token = self.mint_token();
+            }
+        }
         for (i, msg) in self.messages.iter().enumerate() {
             if let Some(sid) = msg.server_id.clone() {
                 self.by_server_id.insert(sid, i);
             }
+            self.token_to_idx.insert(msg.token, i);
             for (tool_idx, tool) in msg.tool_calls.iter().enumerate() {
                 if let Some(id) = tool.id.clone() {
                     if !id.is_empty() {
@@ -861,15 +973,82 @@ mod tests {
         let mut s = MessageStore::new();
         s.push(user("a"));
         s.push(assistant_streaming());
-        s.push(user("b"));
+        let anchor = s.streaming_assistant_token().expect("anchor available");
+        let mut b = user("b");
+        b.queued_under = Some(anchor);
+        s.push(b);
         {
             let flags = s.queued_flags().to_vec();
-            assert_eq!(flags, vec![false, false, true]);
+            assert_eq!(
+                flags,
+                vec![false, false, true],
+                "b is queued under the still-streaming anchor",
+            );
         }
         s.finish_streaming_assistant(None);
         s.push(user("c"));
         let flags = s.queued_flags().to_vec();
-        assert_eq!(flags, vec![false, false, false, false]);
+        assert_eq!(
+            flags,
+            vec![false, false, false, false],
+            "anchor no longer streaming → b unqueued; c never had an anchor",
+        );
+    }
+
+    #[test]
+    fn queued_under_makes_burst_unqueue_together() {
+        let mut s = MessageStore::new();
+        s.push(assistant_streaming());
+        let anchor = s.streaming_assistant_token().expect("anchor available");
+
+        for label in ["a", "b", "c"] {
+            let mut u = user(label);
+            u.queued_under = Some(anchor);
+            s.push(u);
+            s.push(assistant_streaming());
+        }
+
+        assert_eq!(
+            s.queued_flags().to_vec(),
+            vec![false, true, false, true, false, true, false],
+            "3 users queued, leading + 3 trailing assistants in between",
+        );
+
+        s.finish_streaming_assistant(None);
+
+        assert_eq!(
+            s.queued_flags().to_vec(),
+            vec![false, false, false, false, false, false, false],
+            "burst-unqueue: all three users lose QUEUED when the anchor turn ends",
+        );
+    }
+
+    #[test]
+    fn queued_under_survives_message_removal_via_rebuild() {
+        let mut s = MessageStore::new();
+        let mut a = assistant_streaming();
+        a.server_id = Some("a-1".into());
+        s.push(a);
+        let anchor = s.streaming_assistant_token().expect("anchor available");
+
+        let mut u = user("u");
+        u.queued_under = Some(anchor);
+        u.server_id = Some("u-1".into());
+        s.push(u);
+
+        let mut tail = user("tail");
+        tail.server_id = Some("u-2".into());
+        s.push(tail);
+
+        assert_eq!(s.queued_flags().to_vec(), vec![false, true, false]);
+
+        s.remove_by_server_id("u-2");
+        assert_eq!(s.len(), 2);
+        assert_eq!(
+            s.queued_flags().to_vec(),
+            vec![false, true],
+            "queued user keeps its anchor through a remove + rebuild",
+        );
     }
 
     #[test]
@@ -927,6 +1106,98 @@ mod tests {
         assert_eq!(s.len(), 1);
         assert_eq!(s.messages[0].content, "hello world");
         assert_eq!(s.streaming_assistant_index(), Some(0));
+    }
+
+    #[test]
+    fn append_delta_accumulates_approx_token_count() {
+        let mut s = MessageStore::new();
+        s.append_assistant_delta("hello world", false, None, assistant_streaming);
+        s.append_assistant_delta("more", false, None, assistant_streaming);
+        s.append_assistant_delta("thinking...", true, None, assistant_streaming);
+        let msg = &s.messages[0];
+        assert!(msg.tokens_approx);
+        assert_eq!(
+            msg.output_tokens,
+            crate::model::approx_tokens("hello world")
+                + crate::model::approx_tokens("more")
+                + crate::model::approx_tokens("thinking...")
+        );
+        assert!(msg.started_at.is_some(), "started_at anchors live duration");
+    }
+
+    #[test]
+    fn update_last_assistant_meta_replaces_approximation_with_exact_total() {
+        let mut s = MessageStore::new();
+        s.append_assistant_delta("partial", false, None, assistant_streaming);
+        assert!(s.messages[0].tokens_approx);
+        let before = s.messages[0].output_tokens;
+        assert!(before > 0);
+
+        s.update_last_assistant_meta(None, None, None, None, Some(1234));
+        assert_eq!(s.messages[0].output_tokens, 1234);
+        assert!(!s.messages[0].tokens_approx);
+    }
+
+    #[test]
+    fn approx_tokens_handles_edges() {
+        assert_eq!(crate::model::approx_tokens(""), 0);
+        assert_eq!(crate::model::approx_tokens("a"), 1);
+        assert_eq!(crate::model::approx_tokens("abcd"), 1);
+        assert_eq!(crate::model::approx_tokens("abcde"), 2);
+        assert_eq!(crate::model::approx_tokens("✓✓✓✓"), 1);
+    }
+
+    #[test]
+    fn tick_streaming_assistant_noop_when_idle() {
+        let mut s = MessageStore::new();
+        s.push(user("u"));
+        assert!(!s.tick_streaming_assistant());
+    }
+
+    #[test]
+    fn tick_streaming_assistant_bumps_store_when_streaming() {
+        let mut s = MessageStore::new();
+        s.push(assistant_streaming());
+        let before = s.version();
+        assert!(s.tick_streaming_assistant());
+        assert_ne!(s.version(), before, "tick should bump store version");
+    }
+
+    #[test]
+    fn bump_streaming_output_tokens_credits_streaming_assistant() {
+        let mut s = MessageStore::new();
+        s.push(user("u"));
+        s.push(assistant_streaming());
+        assert!(s.bump_streaming_output_tokens(42, None));
+        let m = &s.messages[1];
+        assert_eq!(m.output_tokens, 42);
+        assert!(m.tokens_approx);
+        assert!(m.started_at.is_some(), "anchor live duration on first bump");
+    }
+
+    #[test]
+    fn bump_streaming_output_tokens_is_idempotent_on_zero() {
+        let mut s = MessageStore::new();
+        s.push(assistant_streaming());
+        assert!(!s.bump_streaming_output_tokens(0, None));
+        assert_eq!(s.messages[0].output_tokens, 0);
+    }
+
+    #[test]
+    fn bump_streaming_output_tokens_finds_target_by_server_id() {
+        let mut s = MessageStore::new();
+        let mut a = assistant_streaming();
+        a.server_id = Some("a-1".into());
+        s.push(a);
+        assert!(s.bump_streaming_output_tokens(7, Some("a-1")));
+        assert_eq!(s.messages[0].output_tokens, 7);
+    }
+
+    #[test]
+    fn bump_streaming_output_tokens_noop_without_streaming_target() {
+        let mut s = MessageStore::new();
+        s.push(user("u"));
+        assert!(!s.bump_streaming_output_tokens(50, None));
     }
 
     #[test]
@@ -1097,7 +1368,7 @@ mod tests {
         s.push(user("u"));
         s.last_assistant_idx = Some(99);
         s.streaming_assistant_idx = Some(99);
-        s.update_last_assistant_meta(Some("a".into()), None, None, None);
+        s.update_last_assistant_meta(Some("a".into()), None, None, None, None);
     }
 
     #[test]

@@ -103,6 +103,7 @@ pub struct HostMessage {
     pub model: Option<String>,
     pub provider_id: Option<String>,
     pub duration: Option<std::time::Duration>,
+    pub output_tokens: Option<u64>,
     pub error: Option<String>,
     pub interrupted: bool,
     pub tool_calls: Vec<ToolCall>,
@@ -123,6 +124,7 @@ impl HostMessage {
             model: None,
             provider_id: None,
             duration: None,
+            output_tokens: None,
             error: None,
             interrupted: false,
             tool_calls: Vec::new(),
@@ -143,6 +145,7 @@ impl HostMessage {
             model: None,
             provider_id: None,
             duration: None,
+            output_tokens: None,
             error: None,
             interrupted: false,
             tool_calls: Vec::new(),
@@ -163,6 +166,7 @@ impl HostMessage {
             model: None,
             provider_id: None,
             duration: None,
+            output_tokens: None,
             error: None,
             interrupted: false,
             tool_calls: Vec::new(),
@@ -198,6 +202,11 @@ impl HostMessage {
 
     pub fn with_duration(mut self, duration: std::time::Duration) -> Self {
         self.duration = Some(duration);
+        self
+    }
+
+    pub fn with_output_tokens(mut self, tokens: u64) -> Self {
+        self.output_tokens = Some(tokens);
         self
     }
 
@@ -311,6 +320,7 @@ impl Toast {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Action {
     User(UserAction),
     View(ViewAction),
@@ -415,6 +425,7 @@ pub enum HostAction {
         model: Option<String>,
         provider_id: Option<String>,
         duration: Option<std::time::Duration>,
+        output_tokens: Option<u64>,
     },
     SetLastAssistantError(String),
     MarkAssistantInterrupted {
@@ -468,6 +479,10 @@ pub enum HostAction {
     AssistantDelta {
         text: String,
         thoughts: bool,
+        message_id: Option<String>,
+    },
+    AssistantTokenProgress {
+        tokens: u64,
         message_id: Option<String>,
     },
     AssistantDone {

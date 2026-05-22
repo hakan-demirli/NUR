@@ -145,16 +145,19 @@ pub fn translate(
                         }
                         _ => None,
                     };
+                    let output_tokens = super::sidebar::message_output_tokens(&info.info.extra);
                     if agent.is_some()
                         || model.is_some()
                         || provider_id.is_some()
                         || duration.is_some()
+                        || output_tokens.is_some()
                     {
                         out.push(Action::Host(HostAction::UpdateLastAssistantMeta {
                             agent,
                             model,
                             provider_id,
                             duration,
+                            output_tokens,
                         }));
                     }
                     if let Some(raw) = info.info.extra.get("error") {
@@ -276,8 +279,19 @@ pub fn translate(
             let recognised_field = matches!(field.as_str(), "text" | "reasoning")
                 || matches!(kind, PartKind::Reasoning);
             if !recognised_field {
+                let delta_chars = delta.chars().count();
+                if delta_chars > 0 {
+                    mirror.note_tool_input_chars(message_id.clone(), part_id.clone(), delta_chars);
+                    let approx = raider_tui::model::approx_tokens_from_chars(delta_chars as u64);
+                    if approx > 0 {
+                        out.push(Action::Host(HostAction::AssistantTokenProgress {
+                            tokens: approx,
+                            message_id: Some(message_id.as_str().to_string()),
+                        }));
+                    }
+                }
                 out.log(format!(
-                    "message.part.delta with unknown field={field} (preserved as no-op)"
+                    "message.part.delta with unknown field={field} (credited to live token counter)"
                 ));
                 return out;
             }
@@ -395,6 +409,19 @@ fn handle_part(
                     mirror.remember_task_child_session(child_sid, t.id.clone());
                 }
             }
+            let new_chars = tool_llm_char_count(&t);
+            let delta_chars =
+                mirror.diff_tool_input_chars(message_id.clone(), t.id.clone(), new_chars);
+            if delta_chars > 0 {
+                let approx = raider_tui::model::approx_tokens_from_chars(delta_chars as u64);
+                if approx > 0 {
+                    out.actions
+                        .push(Action::Host(HostAction::AssistantTokenProgress {
+                            tokens: approx,
+                            message_id: mid_str.clone(),
+                        }));
+                }
+            }
             out.actions
                 .push(Action::Host(HostAction::UpsertToolCall(Box::new(
                     tool_part_to_call(&t),
@@ -409,4 +436,10 @@ fn handle_part(
         }
         MessagePart::StepStart(_) | MessagePart::StepFinish(_) | MessagePart::Other => {}
     }
+}
+
+fn tool_llm_char_count(t: &raider_opencode::types::message::ToolPart) -> usize {
+    let title_chars = t.state.title.chars().count();
+    let input_chars = t.state.input.to_string().chars().count();
+    title_chars.saturating_add(input_chars)
 }

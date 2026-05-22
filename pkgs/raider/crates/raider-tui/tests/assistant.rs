@@ -135,6 +135,7 @@ fn queued_badge_clears_when_blocking_assistant_finalises() {
         model: Some("big-pickle".into()),
         provider_id: Some("opencode".into()),
         duration: Some(std::time::Duration::from_millis(9_700)),
+        output_tokens: None,
     }));
     h.dispatch(Action::Host(HostAction::AssistantDone {
         message_id: Some("msg_0".into()),
@@ -145,14 +146,17 @@ fn queued_badge_clears_when_blocking_assistant_finalises() {
         .iter()
         .filter(|m| m.sender == raider_tui::Sender::Assistant)
         .collect();
-    assert_eq!(assistants.len(), 2, "two optimistic assistant placeholders");
-    assert!(
-        !assistants[0].is_streaming,
-        "the completed, older assistant placeholder must stop streaming",
+    assert_eq!(
+        assistants.len(),
+        1,
+        "submits made during a streaming turn do NOT pre-allocate their own \
+         placeholder (that would splice the in-flight turn's content between \
+         burst submissions); only the leading turn's placeholder exists here",
     );
     assert!(
-        assistants[1].is_streaming,
-        "the queued prompt's placeholder must remain streaming for its future deltas",
+        !assistants[0].is_streaming,
+        "the only assistant placeholder (the leading turn's) must stop \
+         streaming once its done event fires",
     );
     h.draw();
     let snap = h.snapshot();
@@ -161,10 +165,17 @@ fn queued_badge_clears_when_blocking_assistant_finalises() {
         "no user message should remain queued once the blocking \
          assistant placeholder is finalised:\n{snap}"
     );
+    let messages: Vec<_> = h.app.messages.iter().collect();
+    assert_eq!(messages.len(), 3, "u0, u1, a0_done");
+    assert_eq!(messages[0].sender, raider_tui::Sender::User);
+    assert_eq!(messages[0].content, "first");
+    assert_eq!(messages[1].sender, raider_tui::Sender::User);
+    assert_eq!(messages[1].content, "second");
+    assert_eq!(messages[2].sender, raider_tui::Sender::Assistant);
 }
 
 #[test]
-fn three_back_to_back_submits_all_unqueue_as_assistants_complete() {
+fn three_back_to_back_submits_all_unqueue_when_leading_turn_completes() {
     let mut h = Harness::new(140, 40);
     pin_dummy_model(&mut h);
     for i in 0..3 {
@@ -177,8 +188,9 @@ fn three_back_to_back_submits_all_unqueue_as_assistants_complete() {
     let initial_queued = after_submit.matches("QUEUED").count();
     assert_eq!(
         initial_queued, 2,
-        "with 3 back-to-back submits, 2 should be queued (the first one is \
-         active); got {initial_queued} QUEUED badges in:\n{after_submit}",
+        "with 3 back-to-back submits, 2 should be queued (user_1 and user_2 \
+         queued under user_0's turn; user_0 itself drives that turn so is \
+         not queued); got {initial_queued} QUEUED badges in:\n{after_submit}",
     );
 
     h.dispatch(Action::Host(HostAction::AssistantDelta {
@@ -193,8 +205,12 @@ fn three_back_to_back_submits_all_unqueue_as_assistants_complete() {
     let after_first = h.snapshot();
     let q1 = after_first.matches("QUEUED").count();
     assert_eq!(
-        q1, 1,
-        "after first assistant completes, exactly 1 user should remain queued; \
+        q1, 0,
+        "after the leading turn completes, BOTH queued user messages must \
+         lose their QUEUED badge together — their anchor (turn 0) is done. \
+         Getting a partial peel-off would mean a future submission's badge \
+         drops only when its own preceding placeholder finishes, which is \
+         the regression this test guards against. \
          got {q1} in:\n{after_first}",
     );
 
@@ -211,13 +227,13 @@ fn three_back_to_back_submits_all_unqueue_as_assistants_complete() {
     let q2 = after_second.matches("QUEUED").count();
     assert_eq!(
         q2, 0,
-        "after second assistant completes, NO user should remain queued; \
-         got {q2} (user-reported bug: bottom message stuck QUEUED forever):\n{after_second}",
+        "no user should be queued after every assistant in the burst has \
+         completed; got {q2} in:\n{after_second}",
     );
 }
 
 #[test]
-fn queued_prompt_deltas_attach_above_queued_user_message() {
+fn queued_prompt_deltas_stream_below_the_burst_not_interleaved() {
     let mut h = Harness::new(140, 30);
     pin_dummy_model(&mut h);
     h.dispatch(Action::User(UserAction::PasteText("first prompt".into())));
@@ -233,11 +249,12 @@ fn queued_prompt_deltas_attach_above_queued_user_message() {
     h.draw();
     let snap = h.snapshot();
     let first_user = snap.find("first prompt").expect("first user rendered");
-    let first_answer = snap.find("FIRST_ANSWER").expect("first answer rendered");
     let second_user = snap.find("second prompt").expect("second user rendered");
+    let first_answer = snap.find("FIRST_ANSWER").expect("first answer rendered");
     assert!(
-        first_user < first_answer && first_answer < second_user,
-        "first assistant answer must render between the first user and queued second user:\n{snap}",
+        first_user < second_user && second_user < first_answer,
+        "user submissions must stay contiguous; the in-flight assistant \
+         content lands BELOW the burst, not between submissions:\n{snap}",
     );
 
     h.dispatch(Action::Host(HostAction::AssistantDone { message_id: None }));
@@ -252,7 +269,60 @@ fn queued_prompt_deltas_attach_above_queued_user_message() {
     let second_answer = snap.find("SECOND_ANSWER").expect("second answer rendered");
     assert!(
         second_user < second_answer,
-        "after the first turn finalises, the next deltas must fill the second placeholder:\n{snap}",
+        "subsequent turns' deltas land in a freshly-minted placeholder at \
+         the bottom of the transcript:\n{snap}",
+    );
+}
+
+#[test]
+fn burst_user_submissions_keep_assistant_response_below_the_burst() {
+    let mut h = Harness::new(140, 50);
+    pin_dummy_model(&mut h);
+
+    let users = [
+        "or sus stuff?",
+        "or fix?",
+        "required?",
+        "to u know?",
+        "make it better?",
+    ];
+    for u in users {
+        h.dispatch(Action::User(UserAction::PasteText(u.into())));
+        h.dispatch(Action::User(UserAction::SubmitInput));
+    }
+
+    h.dispatch(Action::Host(HostAction::AssistantDelta {
+        text: "interrupted thought".into(),
+        thoughts: false,
+        message_id: Some("msg_0".into()),
+    }));
+    h.dispatch(Action::Host(HostAction::AssistantDone {
+        message_id: Some("msg_0".into()),
+    }));
+
+    h.draw();
+    let snap = h.snapshot();
+
+    let mut last_pos = 0usize;
+    for u in users {
+        let pos = snap
+            .find(u)
+            .unwrap_or_else(|| panic!("user submission {u:?} missing from snapshot:\n{snap}"));
+        assert!(
+            pos >= last_pos,
+            "user submissions must render in submit order; \
+             {u:?} appeared at {pos} (last seen at {last_pos}):\n{snap}",
+        );
+        last_pos = pos;
+    }
+    let assistant_pos = snap
+        .find("interrupted thought")
+        .unwrap_or_else(|| panic!("assistant content missing:\n{snap}"));
+    assert!(
+        assistant_pos > last_pos,
+        "the in-flight assistant turn must land BELOW the last burst user \
+         submission, not between user_0 and user_1. \
+         assistant_pos={assistant_pos}, last_user_pos={last_pos}:\n{snap}",
     );
 }
 
@@ -580,6 +650,99 @@ fn assistant_footer_omits_missing_metadata_segments() {
 }
 
 #[test]
+fn assistant_footer_shows_live_approx_token_count_during_streaming() {
+    use raider_tui::HostMessage;
+    let mut h = Harness::new(140, 30);
+    pin_dummy_model(&mut h);
+    h.dispatch(Action::Host(HostAction::AppendMessage(HostMessage::user(
+        "hi",
+    ))));
+    h.dispatch(Action::Host(HostAction::AssistantDelta {
+        text: "x".repeat(64),
+        thoughts: false,
+        message_id: None,
+    }));
+    h.draw();
+    let snap = h.snapshot();
+    assert!(
+        snap.contains("~16 tokens"),
+        "live approximate token count must appear with tilde prefix:\n{snap}"
+    );
+}
+
+#[test]
+fn assistant_footer_drops_tilde_after_exact_total_from_meta_patch() {
+    use raider_tui::HostMessage;
+    let mut h = Harness::new(140, 30);
+    pin_dummy_model(&mut h);
+    h.dispatch(Action::Host(HostAction::AppendMessage(HostMessage::user(
+        "hi",
+    ))));
+    h.dispatch(Action::Host(HostAction::AssistantDelta {
+        text: "partial output".into(),
+        thoughts: false,
+        message_id: None,
+    }));
+    h.dispatch(Action::Host(HostAction::UpdateLastAssistantMeta {
+        agent: Some("build".into()),
+        model: Some("claude-opus-4-7".into()),
+        provider_id: Some("anthropic".into()),
+        duration: Some(std::time::Duration::from_millis(3_900)),
+        output_tokens: Some(898),
+    }));
+    h.draw();
+    let snap = h.snapshot();
+    assert!(
+        snap.contains("898 tokens"),
+        "exact token count must render:\n{snap}"
+    );
+    assert!(
+        !snap.contains("~898 tokens"),
+        "tilde must be dropped once exact total replaces approximation:\n{snap}"
+    );
+}
+
+#[test]
+fn assistant_footer_token_count_persists_on_completed_message_via_host_message() {
+    use raider_tui::HostMessage;
+    let mut h = Harness::new(140, 30);
+    h.dispatch(Action::Host(HostAction::AppendMessage(
+        HostMessage::assistant("done", "")
+            .with_agent("build")
+            .with_model("Claude Opus 4.7")
+            .with_duration(std::time::Duration::from_millis(1_600))
+            .with_output_tokens(2048),
+    )));
+    h.draw();
+    let snap = h.snapshot();
+    assert!(
+        snap.contains("2048 tokens"),
+        "completed message must render exact tokens:\n{snap}"
+    );
+    assert!(
+        !snap.contains("~2048 tokens"),
+        "no tilde on completed messages:\n{snap}"
+    );
+}
+
+#[test]
+fn assistant_footer_omits_token_segment_when_count_is_zero() {
+    use raider_tui::HostMessage;
+    let mut h = Harness::new(140, 30);
+    h.dispatch(Action::Host(HostAction::AppendMessage(
+        HostMessage::assistant("hello", "")
+            .with_agent("build")
+            .with_duration(std::time::Duration::from_millis(500)),
+    )));
+    h.draw();
+    let snap = h.snapshot();
+    assert!(
+        !snap.contains("tokens"),
+        "no token segment when output_tokens == 0:\n{snap}"
+    );
+}
+
+#[test]
 fn submit_pre_populates_streaming_placeholder_metadata() {
     let mut h = Harness::new(140, 30);
     pin_dummy_model(&mut h);
@@ -620,6 +783,7 @@ fn host_update_last_assistant_meta_patches_streaming_message() {
         model: Some("claude-opus-4-7".into()),
         provider_id: Some("anthropic".into()),
         duration: Some(std::time::Duration::from_millis(3_900)),
+        output_tokens: None,
     }));
     h.draw();
     let snap = h.snapshot();

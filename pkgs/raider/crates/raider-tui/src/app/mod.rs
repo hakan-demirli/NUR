@@ -327,9 +327,14 @@ impl App {
                 model,
                 provider_id,
                 duration,
-            } => self
-                .messages
-                .update_last_assistant_meta(agent, model, provider_id, duration),
+                output_tokens,
+            } => self.messages.update_last_assistant_meta(
+                agent,
+                model,
+                provider_id,
+                duration,
+                output_tokens,
+            ),
             HostAction::SetLastAssistantError(err) => {
                 let _ = self.messages.set_last_assistant_error(err);
             }
@@ -388,6 +393,10 @@ impl App {
                 thoughts,
                 message_id,
             } => self.append_assistant_delta(&text, thoughts, message_id.as_deref()),
+            HostAction::AssistantTokenProgress { tokens, message_id } => {
+                self.messages
+                    .bump_streaming_output_tokens(tokens, message_id.as_deref());
+            }
             HostAction::AssistantDone { message_id } => self
                 .messages
                 .finish_streaming_assistant(message_id.as_deref()),
@@ -399,6 +408,7 @@ impl App {
             Lifecycle::Tick => {
                 self.input.cursor_visible = !self.input.cursor_visible;
                 self.dialogs.tick_toast();
+                self.messages.tick_streaming_assistant();
             }
             Lifecycle::Resize { cols, rows } => self.scroll.on_resize(cols, rows),
             Lifecycle::Quit => self.runtime.request_quit(),
@@ -656,24 +666,35 @@ impl App {
             self.run_command(raw);
         } else {
             let ts = self.runtime.now_hhmm();
-            self.messages.push(Message::user(&raw_for_history, &ts));
-            let agent = Some(self.agents.current().name.clone());
-            let model = self
-                .models
-                .current_model
-                .as_ref()
-                .map(|m| m.model_id.clone());
-            let provider_id = self
-                .models
-                .current_model
-                .as_ref()
-                .map(|m| m.provider_id.clone());
-            self.messages.push(Message::assistant_streaming_with_meta(
-                ts,
-                agent,
-                model,
-                provider_id,
-            ));
+            let leading_under = self.messages.streaming_assistant_token();
+            let leading_idx = self.messages.streaming_assistant_index();
+            let mut user_msg = Message::user(&raw_for_history, &ts);
+            user_msg.queued_under = leading_under;
+            match leading_idx {
+                Some(idx) => {
+                    self.messages.insert(idx, user_msg);
+                }
+                None => {
+                    self.messages.push(user_msg);
+                    let agent = Some(self.agents.current().name.clone());
+                    let model = self
+                        .models
+                        .current_model
+                        .as_ref()
+                        .map(|m| m.model_id.clone());
+                    let provider_id = self
+                        .models
+                        .current_model
+                        .as_ref()
+                        .map(|m| m.provider_id.clone());
+                    self.messages.push(Message::assistant_streaming_with_meta(
+                        ts,
+                        agent,
+                        model,
+                        provider_id,
+                    ));
+                }
+            }
             if file_parts.is_empty() {
                 self.runtime.push(Event::UserMessage(raw));
             } else {
