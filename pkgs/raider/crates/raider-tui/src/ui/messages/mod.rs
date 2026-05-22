@@ -25,6 +25,7 @@ pub(crate) fn reasoning_title(text: &str) -> Option<String> {
     Some(title.trim().to_string())
 }
 
+#[derive(Clone, Copy)]
 struct MarkdownResources<'a> {
     ps: &'a syntect::parsing::SyntaxSet,
     ts: &'a syntect::highlighting::ThemeSet,
@@ -72,34 +73,41 @@ fn assistant_text_items(
 
 fn cached_assistant_text_items(
     cache: &mut std::collections::HashMap<String, PartRenderCacheEntry>,
-    cache_id: String,
+    cache_id_prefix: String,
     text: &str,
     width: usize,
     theme: &crate::ui::theme::Theme,
     resources: MarkdownResources<'_>,
 ) -> Vec<ListItem<'static>> {
-    let key = PartRenderCacheKey {
-        width,
-        theme_mode: theme.mode,
-        kind: PartRenderKind::Text,
-        collapsed: false,
-        streaming: false,
-        content_hash: crate::model::content_fingerprint(text),
-    };
-    if let Some(entry) = cache.get(&cache_id) {
-        if entry.key == key {
-            return entry.items.clone();
+    let segments = crate::stream::split_into_segments(text);
+    let mut out: Vec<ListItem<'static>> = Vec::new();
+    for (seg_idx, seg) in segments.iter().enumerate() {
+        let cache_id = format!("{cache_id_prefix}:seg:{seg_idx}");
+        let key = PartRenderCacheKey {
+            width,
+            theme_mode: theme.mode,
+            kind: PartRenderKind::Text,
+            collapsed: false,
+            streaming: false,
+            content_hash: crate::model::content_fingerprint(seg),
+        };
+        if let Some(entry) = cache.get(&cache_id) {
+            if entry.key == key {
+                out.extend(entry.items.iter().cloned());
+                continue;
+            }
         }
+        let items = assistant_text_items(seg, width, theme, resources);
+        cache.insert(
+            cache_id,
+            PartRenderCacheEntry {
+                key,
+                items: items.clone(),
+            },
+        );
+        out.extend(items);
     }
-    let items = assistant_text_items(text, width, theme, resources);
-    cache.insert(
-        cache_id,
-        PartRenderCacheEntry {
-            key,
-            items: items.clone(),
-        },
-    );
-    items
+    out
 }
 
 fn assistant_thought_items(
@@ -263,34 +271,17 @@ pub(crate) fn render_messages(f: &mut Frame, app: &mut App, area: Rect) {
     let synth_theme = &app.theme.synth_theme;
 
     let current_agent_name = app.current_agent().name.clone();
-    let agents_slice = app.agents.as_slice().to_vec();
+    let agents = &app.agents;
     let show_timestamps = app.messages.show_timestamps;
     let catalog = &app.models.catalog;
 
-    let queued_flags: Vec<bool> = {
-        let mut flags = Vec::with_capacity(app.messages.len().saturating_sub(render_start_idx));
-        let mut has_streaming_before = app
-            .messages
-            .iter()
-            .take(render_start_idx)
-            .any(|m| m.sender == Sender::Assistant && m.is_streaming);
-        for m in app.messages.iter().skip(render_start_idx) {
-            let is_streaming_assistant = m.sender == Sender::Assistant && m.is_streaming;
-            let queued = matches!(m.sender, Sender::User) && has_streaming_before;
-            flags.push(queued);
-            if is_streaming_assistant {
-                has_streaming_before = true;
-            }
-        }
-        flags
-    };
-
-    let last_assistant_index: Option<usize> = app
-        .messages
+    let queued_flags_full: Vec<bool> = app.messages.queued_flags().to_vec();
+    let queued_flags: Vec<bool> = queued_flags_full
         .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(i, m)| (m.sender == Sender::Assistant).then_some(i));
+        .skip(render_start_idx)
+        .copied()
+        .collect();
+    let last_assistant_index: Option<usize> = app.messages.last_assistant_index();
 
     let subagent_footer_should_show = app.sessions.sessions.current_is_child();
     let current_session_has_children = app
@@ -322,11 +313,13 @@ pub(crate) fn render_messages(f: &mut Frame, app: &mut App, area: Rect) {
             continue;
         }
 
-        let content_fp = crate::model::content_fingerprint(&msg.content);
-        let thoughts_fp = crate::model::content_fingerprint(&msg.thoughts);
-        let cache_stale = msg.last_render_width != width
-            || msg.rendered_content_cache.is_none()
-            || msg.content_fingerprint != content_fp;
+        let legacy_key = crate::model::LegacyCacheKey {
+            version: msg.version(),
+            width,
+            theme_mode: theme.mode,
+        };
+        let cache_stale =
+            msg.rendered_content_cache.is_none() || msg.legacy_cache_key != Some(legacy_key);
         let bg_color = match msg.sender {
             Sender::User => theme.background_panel,
             _ => theme.background,
@@ -336,7 +329,7 @@ pub(crate) fn render_messages(f: &mut Frame, app: &mut App, area: Rect) {
         let block_style = Style::default().bg(bg_color);
         let user_bar_color = agent_color(
             theme,
-            &agents_slice,
+            agents,
             msg.agent.as_deref().unwrap_or(&current_agent_name),
         );
         let user_bar_style = Style::default().fg(user_bar_color).bg(bg_color);
@@ -378,6 +371,21 @@ pub(crate) fn render_messages(f: &mut Frame, app: &mut App, area: Rect) {
                 .collect();
             msg.tool_render_cache
                 .retain(|id, _| live_ids.contains(id.as_str()));
+
+            let part_count = parts.len();
+            msg.part_render_cache.retain(|key, _| {
+                let body = key
+                    .strip_prefix("ordered:text:")
+                    .or_else(|| key.strip_prefix("ordered:thought:"));
+                let Some(body) = body else {
+                    return key.starts_with("legacy:thought:");
+                };
+                let part_idx_str = body.split(':').next().unwrap_or("");
+                part_idx_str
+                    .parse::<usize>()
+                    .map(|i| i < part_count)
+                    .unwrap_or(false)
+            });
 
             let mut prev_was_inline_tool = false;
             for (part_idx, part) in parts.into_iter().enumerate() {
@@ -472,7 +480,6 @@ pub(crate) fn render_messages(f: &mut Frame, app: &mut App, area: Rect) {
                 if !rendered.is_empty() {
                     margin_top(&mut items);
                     items.extend(rendered);
-                    msg.thoughts_fingerprint = thoughts_fp;
                 }
             } else if msg.sender == Sender::Assistant
                 && !msg.thoughts.is_empty()
@@ -497,7 +504,6 @@ pub(crate) fn render_messages(f: &mut Frame, app: &mut App, area: Rect) {
                 if !rendered.is_empty() {
                     margin_top(&mut items);
                     items.extend(rendered);
-                    msg.thoughts_fingerprint = thoughts_fp;
                 }
             }
 
@@ -518,8 +524,7 @@ pub(crate) fn render_messages(f: &mut Frame, app: &mut App, area: Rect) {
                         suppress_style: false,
                     },
                 ));
-                msg.content_fingerprint = content_fp;
-                msg.last_render_width = width;
+                msg.legacy_cache_key = Some(legacy_key);
             }
             if let Some(cache) = &msg.rendered_content_cache {
                 if !cache.is_empty() && msg.sender == Sender::Assistant {
@@ -621,7 +626,7 @@ pub(crate) fn render_messages(f: &mut Frame, app: &mut App, area: Rect) {
 
         let is_last_assistant = Some(msg_idx) == last_assistant_index;
         let user_system_footer = if msg.sender == Sender::User && queued {
-            let badge_bg = agent_color(theme, &agents_slice, &current_agent_name);
+            let badge_bg = agent_color(theme, agents, &current_agent_name);
             let badge_fg = theme.selected_list_item_text;
             Some(Line::from(vec![
                 user_bar.clone(),
@@ -686,7 +691,7 @@ pub(crate) fn render_messages(f: &mut Frame, app: &mut App, area: Rect) {
                 show_timestamps,
                 text_style,
                 theme,
-                &agents_slice,
+                agents,
                 bg_color,
                 catalog,
             )]));

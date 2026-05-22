@@ -1,6 +1,8 @@
 use ratatui::prelude::Line;
 use serde::{Deserialize, Serialize};
 
+use crate::state::Version;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Sender {
@@ -65,16 +67,22 @@ pub struct Message {
     #[serde(skip)]
     pub rendered_thoughts_cache: Option<Vec<Line<'static>>>,
     #[serde(skip)]
-    pub last_render_width: usize,
-    #[serde(skip)]
-    pub content_fingerprint: u64,
-    #[serde(skip)]
-    pub thoughts_fingerprint: u64,
+    pub legacy_cache_key: Option<LegacyCacheKey>,
     #[serde(skip)]
     pub tool_render_cache: std::collections::HashMap<String, ToolRenderCacheEntry>,
 
     #[serde(skip)]
     pub part_render_cache: std::collections::HashMap<String, PartRenderCacheEntry>,
+
+    #[serde(skip)]
+    pub(crate) version: Version,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct LegacyCacheKey {
+    pub version: Version,
+    pub width: usize,
+    pub theme_mode: crate::ui::theme::Mode,
 }
 
 #[derive(Clone, Debug)]
@@ -161,11 +169,10 @@ impl Default for Message {
             compaction: None,
             rendered_content_cache: None,
             rendered_thoughts_cache: None,
-            last_render_width: 0,
-            content_fingerprint: 0,
-            thoughts_fingerprint: 0,
+            legacy_cache_key: None,
             tool_render_cache: std::collections::HashMap::new(),
             part_render_cache: std::collections::HashMap::new(),
+            version: Version::default(),
         }
     }
 }
@@ -237,10 +244,17 @@ impl Message {
     pub fn invalidate_render_cache(&mut self) {
         self.rendered_content_cache = None;
         self.rendered_thoughts_cache = None;
-        self.last_render_width = 0;
-        self.content_fingerprint = 0;
-        self.thoughts_fingerprint = 0;
+        self.legacy_cache_key = None;
         self.part_render_cache.clear();
+        self.version.bump();
+    }
+
+    pub fn version(&self) -> Version {
+        self.version
+    }
+
+    pub fn bump_version(&mut self) {
+        self.version.bump();
     }
 }
 

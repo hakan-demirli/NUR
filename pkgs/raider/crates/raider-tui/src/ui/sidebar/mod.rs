@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Paragraph};
 
+use crate::app::sidebar_state::{SidebarCacheKey, SidebarRender};
 use crate::app::App;
 
 pub(crate) mod files;
@@ -22,11 +25,6 @@ use todos::todo_entry_lines;
 pub(crate) fn render_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
     app.sidebar.last_sidebar_rect = Some(area);
     let theme = app.theme.theme.clone();
-    let sidebar_title = app.sidebar.sidebar.title.clone();
-    let sidebar_subtitle = app.sidebar.sidebar.subtitle.clone();
-    let sidebar_sections = app.sidebar.sidebar.sections.clone();
-    let sidebar_footer = app.sidebar.sidebar.footer.clone();
-    let sidebar_footer_path = app.sidebar.sidebar.footer_path.clone();
     let panel_bg = theme.background_panel;
 
     f.render_widget(Block::default().style(Style::default().bg(panel_bg)), area);
@@ -42,114 +40,12 @@ pub(crate) fn render_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    let body_width = inner.width.saturating_sub(1) as usize;
-    let mut lines: Vec<Line> = Vec::new();
-    let title_style = Style::default()
-        .fg(theme.text)
-        .bg(panel_bg)
-        .add_modifier(Modifier::BOLD);
-    let header_style = title_style;
-    let muted = Style::default().fg(theme.text_muted).bg(panel_bg);
+    let sidebar_footer = app.sidebar.sidebar.footer.clone();
+    let sidebar_footer_path = app.sidebar.sidebar.footer_path.clone();
 
-    push_wrapped_text_lines(&mut lines, &sidebar_title, title_style, body_width);
-    if let Some(subtitle) = &sidebar_subtitle {
-        push_wrapped_text_lines(&mut lines, subtitle, muted, body_width);
-    }
-
-    let mut header_line_indices: Vec<(u32, usize)> = Vec::new();
-    for section in &sidebar_sections {
-        lines.push(Line::from(Span::raw("")));
-        match &section.body {
-            crate::sidebar::SidebarBody::Lines(text_lines) => {
-                lines.push(Line::from(Span::styled(
-                    section.title.clone(),
-                    header_style,
-                )));
-                for line in text_lines {
-                    push_wrapped_text_lines(&mut lines, line, muted, body_width);
-                }
-            }
-            crate::sidebar::SidebarBody::Files {
-                ref entries,
-                collapsed,
-            } => {
-                let collapsed = *collapsed;
-                header_line_indices.push((section.order, lines.len()));
-                lines.push(section_header(
-                    &section.title,
-                    entries.len(),
-                    collapsed,
-                    &theme,
-                    panel_bg,
-                ));
-                if entries.len() <= 2 || !collapsed {
-                    for entry in entries.iter() {
-                        lines.push(file_change_line(&theme, panel_bg, entry, body_width));
-                    }
-                }
-            }
-            crate::sidebar::SidebarBody::Todos {
-                ref entries,
-                collapsed,
-            } => {
-                let collapsed = *collapsed;
-                header_line_indices.push((section.order, lines.len()));
-                lines.push(section_header(
-                    &section.title,
-                    entries.len(),
-                    collapsed,
-                    &theme,
-                    panel_bg,
-                ));
-                if entries.len() <= 2 || !collapsed {
-                    for entry in entries.iter() {
-                        lines.extend(todo_entry_lines(&theme, panel_bg, entry, body_width));
-                    }
-                }
-            }
-            crate::sidebar::SidebarBody::Mcps {
-                ref entries,
-                collapsed,
-            } => {
-                let collapsed = *collapsed;
-                header_line_indices.push((section.order, lines.len()));
-                lines.push(section_header(
-                    &section.title,
-                    entries.len(),
-                    collapsed,
-                    &theme,
-                    panel_bg,
-                ));
-                if entries.len() <= 2 || !collapsed {
-                    for entry in entries.iter() {
-                        lines.push(mcp_entry_line(&theme, panel_bg, entry));
-                    }
-                }
-            }
-            crate::sidebar::SidebarBody::Lsps {
-                ref entries,
-                ref placeholder,
-                collapsed,
-            } => {
-                let collapsed = *collapsed;
-                header_line_indices.push((section.order, lines.len()));
-                lines.push(section_header(
-                    &section.title,
-                    entries.len(),
-                    collapsed,
-                    &theme,
-                    panel_bg,
-                ));
-                if entries.is_empty() {
-                    lines.push(Line::from(Span::styled(placeholder.clone(), muted)));
-                } else if entries.len() <= 2 || !collapsed {
-                    for entry in entries.iter() {
-                        lines.push(lsp_entry_line(&theme, panel_bg, entry));
-                    }
-                }
-            }
-        }
-    }
+    let render = build_or_reuse_render(app, &theme, inner.width);
+    let lines = &render.lines;
+    let header_line_indices = &render.header_line_indices;
 
     let footer_height: u16 = if sidebar_footer_path.is_some() { 2 } else { 1 };
     let gap: u16 = 1;
@@ -196,7 +92,7 @@ pub(crate) fn render_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let mut header_rects: Vec<(u32, ratatui::layout::Rect)> = Vec::new();
-    for (slot, line_idx) in &header_line_indices {
+    for (slot, line_idx) in header_line_indices.iter() {
         if *line_idx < offset {
             continue;
         }
@@ -240,6 +136,153 @@ pub(crate) fn render_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         Paragraph::new(footer_lines).style(Style::default().bg(panel_bg)),
         footer_area,
     );
+}
+
+fn build_or_reuse_render(
+    app: &mut App,
+    theme: &crate::ui::theme::Theme,
+    inner_width: u16,
+) -> Arc<SidebarRender> {
+    let key = SidebarCacheKey {
+        version: app.sidebar.version(),
+        width: inner_width,
+        theme_mode: theme.mode,
+    };
+    if let Some((cached_key, render)) = app.sidebar.render_cache.as_ref() {
+        if *cached_key == key {
+            return render.clone();
+        }
+    }
+    let render = Arc::new(build_sidebar_render(app, theme, inner_width));
+    app.sidebar.render_cache = Some((key, render.clone()));
+    render
+}
+
+fn build_sidebar_render(
+    app: &App,
+    theme: &crate::ui::theme::Theme,
+    inner_width: u16,
+) -> SidebarRender {
+    let panel_bg = theme.background_panel;
+    let body_width = inner_width.saturating_sub(1) as usize;
+    let title_style = Style::default()
+        .fg(theme.text)
+        .bg(panel_bg)
+        .add_modifier(Modifier::BOLD);
+    let header_style = title_style;
+    let muted = Style::default().fg(theme.text_muted).bg(panel_bg);
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut header_line_indices: Vec<(u32, usize)> = Vec::new();
+
+    push_wrapped_text_lines(
+        &mut lines,
+        &app.sidebar.sidebar.title,
+        title_style,
+        body_width,
+    );
+    if let Some(subtitle) = app.sidebar.sidebar.subtitle.as_deref() {
+        push_wrapped_text_lines(&mut lines, subtitle, muted, body_width);
+    }
+
+    for section in &app.sidebar.sidebar.sections {
+        lines.push(Line::from(Span::raw("")));
+        match &section.body {
+            crate::sidebar::SidebarBody::Lines(text_lines) => {
+                lines.push(Line::from(Span::styled(
+                    section.title.clone(),
+                    header_style,
+                )));
+                for line in text_lines {
+                    push_wrapped_text_lines(&mut lines, line, muted, body_width);
+                }
+            }
+            crate::sidebar::SidebarBody::Files {
+                ref entries,
+                collapsed,
+            } => {
+                let collapsed = *collapsed;
+                header_line_indices.push((section.order, lines.len()));
+                lines.push(section_header(
+                    &section.title,
+                    entries.len(),
+                    collapsed,
+                    theme,
+                    panel_bg,
+                ));
+                if entries.len() <= 2 || !collapsed {
+                    for entry in entries.iter() {
+                        lines.push(file_change_line(theme, panel_bg, entry, body_width));
+                    }
+                }
+            }
+            crate::sidebar::SidebarBody::Todos {
+                ref entries,
+                collapsed,
+            } => {
+                let collapsed = *collapsed;
+                header_line_indices.push((section.order, lines.len()));
+                lines.push(section_header(
+                    &section.title,
+                    entries.len(),
+                    collapsed,
+                    theme,
+                    panel_bg,
+                ));
+                if entries.len() <= 2 || !collapsed {
+                    for entry in entries.iter() {
+                        lines.extend(todo_entry_lines(theme, panel_bg, entry, body_width));
+                    }
+                }
+            }
+            crate::sidebar::SidebarBody::Mcps {
+                ref entries,
+                collapsed,
+            } => {
+                let collapsed = *collapsed;
+                header_line_indices.push((section.order, lines.len()));
+                lines.push(section_header(
+                    &section.title,
+                    entries.len(),
+                    collapsed,
+                    theme,
+                    panel_bg,
+                ));
+                if entries.len() <= 2 || !collapsed {
+                    for entry in entries.iter() {
+                        lines.push(mcp_entry_line(theme, panel_bg, entry));
+                    }
+                }
+            }
+            crate::sidebar::SidebarBody::Lsps {
+                ref entries,
+                ref placeholder,
+                collapsed,
+            } => {
+                let collapsed = *collapsed;
+                header_line_indices.push((section.order, lines.len()));
+                lines.push(section_header(
+                    &section.title,
+                    entries.len(),
+                    collapsed,
+                    theme,
+                    panel_bg,
+                ));
+                if entries.is_empty() {
+                    lines.push(Line::from(Span::styled(placeholder.clone(), muted)));
+                } else if entries.len() <= 2 || !collapsed {
+                    for entry in entries.iter() {
+                        lines.push(lsp_entry_line(theme, panel_bg, entry));
+                    }
+                }
+            }
+        }
+    }
+
+    SidebarRender {
+        lines,
+        header_line_indices,
+    }
 }
 
 fn push_wrapped_text_lines(out: &mut Vec<Line<'static>>, text: &str, style: Style, width: usize) {

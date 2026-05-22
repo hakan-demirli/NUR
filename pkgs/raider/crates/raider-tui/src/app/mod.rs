@@ -134,6 +134,31 @@ impl App {
         self.runtime.take_events()
     }
 
+    pub fn animation_demand(&self) -> crate::animation::AnimationDemand {
+        use crate::action::ToolStatus;
+        let streaming = self.messages.streaming_assistant_index().is_some();
+        let tool_running = self.messages.iter().any(|m| {
+            m.tool_calls
+                .iter()
+                .any(|t| matches!(t.status, ToolStatus::Running | ToolStatus::Pending))
+        });
+        let toast_active = self.dialogs.toast.is_some();
+        let retry_pending = self
+            .sessions
+            .sessions
+            .current
+            .as_deref()
+            .and_then(|cur| self.sessions.statuses.get(cur))
+            .map(|s| s.is_retry())
+            .unwrap_or(false);
+        crate::animation::AnimationDemand {
+            streaming,
+            tool_running,
+            toast_active,
+            retry_pending,
+        }
+    }
+
     pub fn dispatch(&mut self, action: Action) {
         match action {
             Action::User(a) => self.dispatch_user(a),
@@ -2029,9 +2054,7 @@ fn trim_render_caches_to_tail(messages: &mut [Message]) {
 fn clear_message_render_caches(msg: &mut Message) {
     msg.rendered_content_cache = None;
     msg.rendered_thoughts_cache = None;
-    msg.last_render_width = 0;
-    msg.content_fingerprint = 0;
-    msg.thoughts_fingerprint = 0;
+    msg.legacy_cache_key = None;
     msg.tool_render_cache.clear();
     msg.part_render_cache.clear();
 }

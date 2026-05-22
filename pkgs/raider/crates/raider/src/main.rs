@@ -363,7 +363,6 @@ async fn run_loop<B: ratatui::backend::Backend>(
     app: &mut App,
     mut host: HostHandle,
 ) -> io::Result<()> {
-    let tick = Duration::from_millis(50);
     let mut last_tick = Instant::now();
     let mut selection = MouseSelection::default();
     let mut last_screen: Option<ScreenSnapshot> = None;
@@ -381,6 +380,8 @@ async fn run_loop<B: ratatui::backend::Backend>(
             dirty = false;
         }
 
+        let demand = app.animation_demand();
+        let tick = demand.idle_poll_or_animation();
         let timeout = tick
             .checked_sub(last_tick.elapsed())
             .unwrap_or(Duration::ZERO);
@@ -532,9 +533,11 @@ async fn run_loop<B: ratatui::backend::Backend>(
         }
 
         if last_tick.elapsed() >= tick {
-            app.dispatch(Action::Lifecycle(Lifecycle::Tick));
             last_tick = Instant::now();
-            dirty = true;
+            if demand.any() {
+                app.dispatch(Action::Lifecycle(Lifecycle::Tick));
+                dirty = true;
+            }
         }
 
         {

@@ -1,4 +1,10 @@
+use std::collections::HashMap;
+
 use crate::action::{Action, UserAction, ViewAction};
+use crate::state::Version;
+
+const NATIVE_SUBAGENTS: &[&str] = &["explore", "general"];
+const DEFAULT_AGENT: &str = "build";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PromptInfo {
@@ -47,6 +53,8 @@ impl AgentIndex {
 pub struct Agents {
     agents: Vec<Agent>,
     cursor: AgentIndex,
+    palette_indices: HashMap<String, usize>,
+    palette_version: Version,
 }
 
 impl Agents {
@@ -54,20 +62,28 @@ impl Agents {
         let mut agents = Vec::with_capacity(1);
         agents.push(first);
         agents.extend(rest);
-        Self {
+        let mut s = Self {
             agents,
             cursor: AgentIndex(0),
-        }
+            palette_indices: HashMap::new(),
+            palette_version: Version::default(),
+        };
+        s.rebuild_palette();
+        s
     }
 
     pub fn try_from_vec(agents: Vec<Agent>) -> Result<Self, EmptyAgentsError> {
         if agents.is_empty() {
             return Err(EmptyAgentsError);
         }
-        Ok(Self {
+        let mut s = Self {
             agents,
             cursor: AgentIndex(0),
-        })
+            palette_indices: HashMap::new(),
+            palette_version: Version::default(),
+        };
+        s.rebuild_palette();
+        Ok(s)
     }
 
     pub fn current(&self) -> &Agent {
@@ -94,6 +110,14 @@ impl Agents {
         &self.agents
     }
 
+    pub fn palette_version(&self) -> Version {
+        self.palette_version
+    }
+
+    pub fn palette_index_of(&self, agent_name: &str) -> usize {
+        *self.palette_indices.get(agent_name).unwrap_or(&0)
+    }
+
     pub fn cycle(&mut self, delta: i32) -> Option<&Agent> {
         let len = self.agents.len() as i32;
         let next = ((self.cursor.0 as i32 + delta).rem_euclid(len)) as usize;
@@ -115,7 +139,27 @@ impl Agents {
             .unwrap_or(0);
         self.agents = new_agents;
         self.cursor = AgentIndex(next_cursor);
+        self.rebuild_palette();
         Ok(())
+    }
+
+    fn rebuild_palette(&mut self) {
+        let mut names: Vec<String> = self.agents.iter().map(|a| a.name.clone()).collect();
+        for sub in NATIVE_SUBAGENTS {
+            if !names.iter().any(|n| n == sub) {
+                names.push((*sub).to_string());
+            }
+        }
+        names.sort_by(|a, b| {
+            let a_default = (a == DEFAULT_AGENT) as u8;
+            let b_default = (b == DEFAULT_AGENT) as u8;
+            b_default.cmp(&a_default).then_with(|| a.cmp(b))
+        });
+        self.palette_indices.clear();
+        for (idx, name) in names.into_iter().enumerate() {
+            self.palette_indices.insert(name, idx);
+        }
+        self.palette_version.bump();
     }
 }
 

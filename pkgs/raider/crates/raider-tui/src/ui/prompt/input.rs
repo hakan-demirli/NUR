@@ -82,7 +82,7 @@ pub(crate) fn render_prompt(
     }
 
     let agent = app.current_agent();
-    let bar_color = agent_color(theme, app.agents.as_slice(), &agent.name);
+    let bar_color = agent_color(theme, &app.agents, &agent.name);
     let bar_style = Style::default().fg(bar_color).bg(prompt_bg);
     let frame_buf = f.buffer_mut();
     for y in area.y..area.y + area.height {

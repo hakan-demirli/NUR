@@ -40,7 +40,7 @@ pub(crate) fn render_sub_tray(f: &mut Frame, app: &App, area: Rect) {
     let mut left_spans: Vec<Span> = Vec::new();
     if working {
         let frame = wipe_frame_now();
-        let agent_tint = agent_color(theme, app.agents.as_slice(), &app.current_agent().name);
+        let agent_tint = agent_color(theme, &app.agents, &app.current_agent().name);
         left_spans.push(Span::styled(
             frame,
             Style::default().fg(agent_tint).bg(theme.background),

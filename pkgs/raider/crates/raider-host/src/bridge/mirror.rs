@@ -34,6 +34,7 @@ pub struct PartMirror {
     child_session_to_parent: HashMap<SessionId, SessionId>,
     child_session_current_tool: HashMap<SessionId, PartId>,
     task_child_tool_ids: HashMap<PartId, std::collections::HashSet<PartId>>,
+    message_to_session: HashMap<MessageId, SessionId>,
 }
 
 impl PartMirror {
@@ -50,6 +51,44 @@ impl PartMirror {
         self.child_session_to_parent.clear();
         self.child_session_current_tool.clear();
         self.task_child_tool_ids.clear();
+        self.message_to_session.clear();
+    }
+
+    pub fn associate_message_with_session(&mut self, message_id: MessageId, session_id: SessionId) {
+        self.message_to_session.insert(message_id, session_id);
+    }
+
+    pub fn mark_message_complete(&mut self, message_id: &MessageId) {
+        self.text.retain(|(mid, _), _| mid != message_id);
+        self.reasoning.retain(|(mid, _), _| mid != message_id);
+    }
+
+    pub fn forget_session(&mut self, session_id: &SessionId) {
+        let owned_messages: Vec<MessageId> = self
+            .message_to_session
+            .iter()
+            .filter(|(_, sid)| *sid == session_id)
+            .map(|(mid, _)| mid.clone())
+            .collect();
+        for mid in &owned_messages {
+            self.text.retain(|(m, _), _| m != mid);
+            self.reasoning.retain(|(m, _), _| m != mid);
+            self.kinds.retain(|(m, _), _| m != mid);
+            self.roles.remove(mid);
+            self.message_to_session.remove(mid);
+        }
+        self.task_child_session_to_part.remove(session_id);
+        self.child_session_to_parent.remove(session_id);
+        self.child_session_current_tool.remove(session_id);
+        let stale_parents: Vec<SessionId> = self
+            .child_session_to_parent
+            .iter()
+            .filter(|(_, parent)| *parent == session_id)
+            .map(|(child, _)| child.clone())
+            .collect();
+        for child in stale_parents {
+            self.child_session_to_parent.remove(&child);
+        }
     }
 
     pub(crate) fn record_child_tool(&mut self, parent_part: PartId, child_part: PartId) -> u32 {
@@ -161,4 +200,78 @@ pub(crate) fn diff_into(
     }
     *prev = full.to_string();
     Some(delta)
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use raider_opencode::types::message::MessageRole;
+
+    fn mid(s: &str) -> MessageId {
+        MessageId::from(s.to_string())
+    }
+
+    fn pid(s: &str) -> PartId {
+        PartId::from(s.to_string())
+    }
+
+    fn sid(s: &str) -> SessionId {
+        SessionId::from(s.to_string())
+    }
+
+    #[test]
+    fn mark_message_complete_drops_text_and_reasoning_for_that_message() {
+        let mut m = PartMirror::new();
+        let _ = m.diff_text(mid("m1"), pid("p1"), "hello");
+        let _ = m.diff_reasoning(mid("m1"), pid("p2"), "thinking");
+        let _ = m.diff_text(mid("m2"), pid("p3"), "other");
+
+        m.mark_message_complete(&mid("m1"));
+
+        assert!(!m.text.contains_key(&(mid("m1"), pid("p1"))));
+        assert!(!m.reasoning.contains_key(&(mid("m1"), pid("p2"))));
+        assert_eq!(
+            m.text.get(&(mid("m2"), pid("p3"))).map(String::as_str),
+            Some("other"),
+            "unrelated message must remain",
+        );
+    }
+
+    #[test]
+    fn forget_session_drops_all_state_for_that_session() {
+        let mut m = PartMirror::new();
+        m.associate_message_with_session(mid("m1"), sid("s1"));
+        m.associate_message_with_session(mid("m2"), sid("s2"));
+        let _ = m.diff_text(mid("m1"), pid("p1"), "in-s1");
+        let _ = m.diff_text(mid("m2"), pid("p2"), "in-s2");
+        m.remember_role(mid("m1"), MessageRole::User);
+        m.remember_role(mid("m2"), MessageRole::Assistant);
+
+        m.forget_session(&sid("s1"));
+
+        assert!(!m.text.contains_key(&(mid("m1"), pid("p1"))));
+        assert!(!m.is_user_message(&mid("m1")));
+        assert_eq!(
+            m.text.get(&(mid("m2"), pid("p2"))).map(String::as_str),
+            Some("in-s2"),
+            "other session is untouched",
+        );
+    }
+
+    #[test]
+    fn forget_session_drops_child_session_links_for_that_parent() {
+        let mut m = PartMirror::new();
+        m.remember_child_parent(sid("child"), sid("parent"));
+        m.forget_session(&sid("parent"));
+        assert!(m.parent_session_for_child(&sid("child")).is_none());
+    }
+
+    #[test]
+    fn associate_then_forget_lets_subsequent_associations_for_same_message_work() {
+        let mut m = PartMirror::new();
+        m.associate_message_with_session(mid("m1"), sid("s1"));
+        m.forget_session(&sid("s1"));
+        m.associate_message_with_session(mid("m1"), sid("s2"));
+        assert!(m.text.is_empty());
+    }
 }

@@ -9,7 +9,7 @@ pub(crate) fn render_connector(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
     let theme = &app.theme.theme;
-    let bar_color = agent_color(theme, app.agents.as_slice(), &app.current_agent().name);
+    let bar_color = agent_color(theme, &app.agents, &app.current_agent().name);
     let left_cap = Style::default().fg(bar_color).bg(theme.background);
     let strip_style = Style::default()
         .fg(theme.background_element)

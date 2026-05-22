@@ -1,6 +1,6 @@
 use ratatui::prelude::*;
 
-use crate::app::builtin::Agent;
+use crate::app::builtin::Agents;
 use crate::ui::agent::{agent_color, agent_color_by_index, resolve_model_display, titlecase};
 use crate::ui::theme::Theme;
 
@@ -9,7 +9,7 @@ pub(crate) fn assistant_footer_line<'a>(
     show_timestamps: bool,
     text_style: Style,
     theme: &Theme,
-    agents: &[Agent],
+    agents: &Agents,
     bg_color: Color,
     catalog: &crate::provider::ModelCatalog,
 ) -> Line<'a> {

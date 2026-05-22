@@ -1,6 +1,6 @@
 use ratatui::style::Color;
 
-use crate::app::builtin::Agent;
+use crate::app::builtin::Agents;
 
 use super::theme::Theme;
 
@@ -21,26 +21,8 @@ pub(crate) fn agent_color_by_index(theme: &Theme, index: usize) -> Color {
     palette[index % palette.len()]
 }
 
-fn opencode_palette_index_for(agent_name: &str, agents: &[Agent]) -> usize {
-    const NATIVE_SUBAGENTS: &[&str] = &["explore", "general"];
-    const DEFAULT_AGENT: &str = "build";
-
-    let mut names: Vec<String> = agents.iter().map(|a| a.name.clone()).collect();
-    for sub in NATIVE_SUBAGENTS {
-        if !names.iter().any(|n| n == sub) {
-            names.push((*sub).to_string());
-        }
-    }
-    names.sort_by(|a, b| {
-        let a_default = (a == DEFAULT_AGENT) as u8;
-        let b_default = (b == DEFAULT_AGENT) as u8;
-        b_default.cmp(&a_default).then_with(|| a.cmp(b))
-    });
-    names.iter().position(|n| n == agent_name).unwrap_or(0)
-}
-
-pub(crate) fn agent_color(theme: &Theme, agents: &[Agent], agent_name: &str) -> Color {
-    let idx = opencode_palette_index_for(agent_name, agents);
+pub(crate) fn agent_color(theme: &Theme, agents: &Agents, agent_name: &str) -> Color {
+    let idx = agents.palette_index_of(agent_name);
     agent_color_by_index(theme, idx)
 }
 
@@ -102,14 +84,22 @@ pub(crate) fn resolve_model_display(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::builtin::Agent;
     use crate::ui::theme::{ThemeName, ThemeRegistry};
+
+    fn make_agents(list: Vec<Agent>) -> Agents {
+        Agents::try_from_vec(list).expect("non-empty")
+    }
 
     #[test]
     fn build_and_plan_match_opencode_default_install() {
         let reg = ThemeRegistry::new();
         let name: ThemeName = reg.lookup("dracula").expect("dracula bundled");
         let theme = reg.get(&name);
-        let agents = vec![Agent::new("build", "Build"), Agent::new("plan", "Plan")];
+        let agents = make_agents(vec![
+            Agent::new("build", "Build"),
+            Agent::new("plan", "Plan"),
+        ]);
 
         let build = agent_color(&theme, &agents, "build");
         let plan = agent_color(&theme, &agents, "plan");
@@ -128,12 +118,15 @@ mod tests {
     }
 
     #[test]
-    fn opencode_palette_index_respects_default_first_then_alphabetical() {
-        let agents = vec![Agent::new("build", "Build"), Agent::new("plan", "Plan")];
-        assert_eq!(opencode_palette_index_for("build", &agents), 0);
-        assert_eq!(opencode_palette_index_for("explore", &agents), 1);
-        assert_eq!(opencode_palette_index_for("general", &agents), 2);
-        assert_eq!(opencode_palette_index_for("plan", &agents), 3);
+    fn palette_index_respects_default_first_then_alphabetical() {
+        let agents = make_agents(vec![
+            Agent::new("build", "Build"),
+            Agent::new("plan", "Plan"),
+        ]);
+        assert_eq!(agents.palette_index_of("build"), 0);
+        assert_eq!(agents.palette_index_of("explore"), 1);
+        assert_eq!(agents.palette_index_of("general"), 2);
+        assert_eq!(agents.palette_index_of("plan"), 3);
     }
 
     #[test]
@@ -141,7 +134,17 @@ mod tests {
         let reg = ThemeRegistry::new();
         let name: ThemeName = reg.lookup("dracula").expect("dracula bundled");
         let theme = reg.get(&name);
-        let agents = vec![Agent::new("build", "Build")];
+        let agents = make_agents(vec![Agent::new("build", "Build")]);
         assert_eq!(agent_color(&theme, &agents, "nope"), theme.secondary);
+    }
+
+    #[test]
+    fn palette_version_bumps_on_replace() {
+        let mut agents = make_agents(vec![Agent::new("build", "Build")]);
+        let v0 = agents.palette_version();
+        agents
+            .try_replace(vec![Agent::new("build", "Build"), Agent::new("plan", "P")])
+            .unwrap();
+        assert!(agents.palette_version() > v0);
     }
 }

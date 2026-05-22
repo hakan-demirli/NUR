@@ -11,7 +11,7 @@ pub(crate) fn render_completion(f: &mut Frame, app: &mut App, input_area: Rect) 
 
     let theme = &app.theme.theme;
     let popup_bg = theme.background_element;
-    let bar_color = agent_color(theme, app.agents.as_slice(), &app.current_agent().name);
+    let bar_color = agent_color(theme, &app.agents, &app.current_agent().name);
 
     let bar_x = input_area.x;
     let inner_x = bar_x + 3;

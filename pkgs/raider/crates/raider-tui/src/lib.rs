@@ -1,4 +1,5 @@
 pub mod action;
+pub mod animation;
 pub mod app;
 pub mod completion;
 pub mod dialog;
@@ -12,6 +13,8 @@ pub mod provider;
 pub mod scroll;
 pub mod session;
 pub mod sidebar;
+pub mod state;
+pub mod stream;
 pub mod ui;
 
 pub use action::{
@@ -33,4 +36,5 @@ pub use session::{SessionEntry, SessionList, SessionStatus};
 pub use sidebar::{
     FileChange, LspEntry, McpEntry, SidebarBody, SidebarSection, SidebarState, TodoEntry,
 };
+pub use state::Version;
 pub use ui::theme::{Mode as ThemeMode, Theme, ThemeName, ThemeRegistry};

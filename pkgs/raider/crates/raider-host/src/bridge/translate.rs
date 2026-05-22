@@ -69,6 +69,13 @@ pub fn translate(
                 .unwrap_or_default();
             out.log(format!("session.deleted id={id}"));
             if !id.is_empty() {
+                if let Some(sid) = info
+                    .as_ref()
+                    .map(|s| s.id.clone())
+                    .or_else(|| session_id.clone())
+                {
+                    mirror.forget_session(&sid);
+                }
                 out.push(Action::Host(HostAction::RemoveSession(id)));
             }
         }
@@ -119,12 +126,16 @@ pub fn translate(
         }
         ServerEvent::MessageUpdated(MessageUpdatedProps { info }) => {
             mirror.remember_role(info.info.id.clone(), info.info.role);
+            if let Some(sid) = info.info.session_id.as_ref() {
+                mirror.associate_message_with_session(info.info.id.clone(), sid.clone());
+            }
 
             let session_match = active_session
                 .and_then(|active| info.info.session_id.as_ref().map(|s| s == active))
                 .unwrap_or(false);
             if session_match && matches!(info.info.role, MessageRole::Assistant) {
                 if info.info.time.completed.is_some() {
+                    mirror.mark_message_complete(&info.info.id);
                     let agent = extract_agent(&info.info.extra);
                     let model = extract_model_display(&info.info.extra);
                     let provider_id = extract_provider(&info.info.extra);
