@@ -1,8 +1,53 @@
 
-local GOAL_BIN = os.getenv("OPENCODE_GOAL_BIN")
-  or "__OPENCODE_GOAL_BIN__"
+local function emptyToNil(s)
+  if s == nil or s == "" then return nil end
+  return s
+end
+
 local HOME = os.getenv("HOME") or ""
-local GLOBAL_SOCKET = HOME .. "/.cache/opencode_goal/daemon.sock"
+local CACHE_ROOT = emptyToNil(os.getenv("GOAL_CACHE_DIR")) or (HOME .. "/.cache/opencode_goal")
+local GLOBAL_SOCKET = CACHE_ROOT .. "/daemon.sock"
+local PID_FILE = CACHE_ROOT .. "/daemon.pid"
+
+local DEFAULT_GOAL_BIN = "__OPENCODE_GOAL_BIN__"
+
+local function tryRun(argv)
+  local ok, result = pcall(api.process.run, argv)
+  if not ok then return nil, tostring(result) end
+  return result, nil
+end
+
+local _cached_bin = nil
+local function invalidateBinCache()
+  _cached_bin = nil
+end
+
+local function resolveGoalBin()
+  if _cached_bin then return _cached_bin end
+  local tried = {}
+  local fromEnv = emptyToNil(os.getenv("OPENCODE_GOAL_BIN"))
+  if fromEnv then
+    table.insert(tried, fromEnv)
+    _cached_bin = fromEnv
+    return fromEnv
+  end
+  local viaPath = tryRun({ "sh", "-c", "command -v opencode-goal" })
+  if viaPath and viaPath.code == 0 then
+    local found = (viaPath.stdout or ""):gsub("%s+$", "")
+    if found ~= "" then
+      table.insert(tried, found)
+      _cached_bin = found
+      return found
+    end
+  end
+  if DEFAULT_GOAL_BIN ~= "" and not DEFAULT_GOAL_BIN:match("^__") then
+    table.insert(tried, DEFAULT_GOAL_BIN)
+    _cached_bin = DEFAULT_GOAL_BIN
+    return DEFAULT_GOAL_BIN
+  end
+  local listing = #tried > 0 and table.concat(tried, ", ") or "(none)"
+  error("opencode-goal binary not found. Set OPENCODE_GOAL_BIN, install opencode-goal on PATH, or rebuild opencode-plugins. Tried: " .. listing)
+end
 
 local function daemonRequest(method, endpoint, body)
   local init = { method = method, unix = GLOBAL_SOCKET }
@@ -26,8 +71,27 @@ local function daemonHealthy()
   return ok
 end
 
+local function readPid()
+  local f = io.open(PID_FILE, "r")
+  if not f then return nil end
+  local raw = f:read("*a") or ""
+  f:close()
+  return tonumber((raw:gsub("%s+", "")))
+end
+
+local function pidAlive(pid)
+  if not pid then return false end
+  local result = tryRun({ "kill", "-0", tostring(pid) })
+  return result ~= nil and result.code == 0
+end
+
 local function startDaemon()
-  local result = api.process.run({ GOAL_BIN, "daemon-start" })
+  local bin = resolveGoalBin()
+  local result, spawnErr = tryRun({ bin, "daemon-start" })
+  if spawnErr then
+    invalidateBinCache()
+    error("could not spawn '" .. bin .. "': " .. spawnErr)
+  end
   if result.code ~= 0 then
     local msg = result.stderr ~= "" and result.stderr or result.stdout
     error((msg ~= "" and msg or ("daemon-start exited " .. tostring(result.code))):gsub("%s+$", ""))
@@ -36,6 +100,10 @@ end
 
 local function ensureDaemon()
   if daemonHealthy() then return end
+  local pid = readPid()
+  if pid and pidAlive(pid) then
+    error("goal daemon wedged (pid " .. tostring(pid) .. "); run /goal restart")
+  end
   startDaemon()
   for _ = 1, 20 do
     if daemonHealthy() then return end
