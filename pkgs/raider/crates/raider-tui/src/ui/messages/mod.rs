@@ -297,7 +297,7 @@ pub(crate) fn render_messages(f: &mut Frame, app: &mut App, area: Rect) {
         .enumerate()
     {
         let msg_idx = render_start_idx + tail_idx;
-        let queued = queued_flags[tail_idx];
+        let queued = queued_flags.get(tail_idx).copied().unwrap_or(false);
 
         if let Some(marker) = msg.compaction {
             items.push(ListItem::new(vec![Line::default()]));

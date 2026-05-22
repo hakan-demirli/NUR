@@ -532,13 +532,13 @@ impl App {
         let Some(current) = self.sessions.sessions.current.clone() else {
             return;
         };
-        let mut messages = std::mem::take(&mut self.messages.messages);
+        let (mut messages, compaction_message_ids) = self.messages.take_for_stash();
         trim_render_caches_to_tail(&mut messages);
         self.transcript_cache.insert(
             current.clone(),
             TranscriptSnapshot {
                 messages,
-                compaction_message_ids: std::mem::take(&mut self.messages.compaction_message_ids),
+                compaction_message_ids,
             },
         );
         self.touch_cached_transcript(current);
@@ -550,8 +550,8 @@ impl App {
         if let Some(snapshot) = self.transcript_cache.remove(id) {
             self.transcript_cache_lru
                 .retain(|cached_id| cached_id != id);
-            self.messages.messages = snapshot.messages;
-            self.messages.compaction_message_ids = snapshot.compaction_message_ids;
+            self.messages
+                .install(snapshot.messages, snapshot.compaction_message_ids);
         } else {
             self.messages.clear();
         }

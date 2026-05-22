@@ -547,9 +547,12 @@ fn sidebar_actions_use_title_when_present() {
     assert!(actions.iter().any(
         |a| matches!(a, Action::Host(HostAction::SetSidebarSubtitle(Some(t))) if t == "ses_abc"),
     ));
-    assert!(actions
-        .iter()
-        .any(|a| matches!(a, Action::Host(HostAction::SetSidebarVisible(true)))));
+    assert!(
+        !actions
+            .iter()
+            .any(|a| matches!(a, Action::Host(HostAction::SetSidebarVisible(_)))),
+        "visibility is owned by the UI; data refresh must not push it",
+    );
 }
 
 #[test]
@@ -564,9 +567,28 @@ fn sidebar_actions_fall_back_to_id_when_title_empty() {
     };
     let actions =
         super::sidebar_actions_for_session(&s, None, &[], &[], &[], &Default::default(), &[], true);
-    assert!(actions
-        .iter()
-        .any(|a| matches!(a, Action::Host(HostAction::SetSidebarTitle(t)) if t == "ses_xyz")));
+    assert!(
+        actions.iter().any(|a| matches!(
+            a,
+            Action::Host(HostAction::SetSidebarTitle(t)) if t == "ses_xyz",
+        )),
+        "title falls back to session id when title is empty",
+    );
+    assert!(
+        actions.iter().any(|a| matches!(
+            a,
+            Action::Host(HostAction::SetSidebarSubtitle(Some(t))) if t == "ses_xyz",
+        )),
+        "subtitle is always the session id",
+    );
+    assert!(
+        !actions
+            .iter()
+            .any(|a| matches!(a, Action::Host(HostAction::SetSidebarVisible(_)))),
+        "visibility must be a UI/user concern; the host must not push it during \
+         routine session refreshes (regression: ctrl+p toggle was getting \
+         clobbered by the next data refresh)",
+    );
 }
 
 #[test]

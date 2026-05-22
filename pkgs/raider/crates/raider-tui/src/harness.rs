@@ -18,7 +18,8 @@ impl Harness {
         }
         let terminal =
             Terminal::new(TestBackend::new(width, height)).expect("create test terminal");
-        let app = App::with_clock(Box::new(FixedClock("00:00".to_string())));
+        let mut app = App::with_clock(Box::new(FixedClock("00:00".to_string())));
+        app.sidebar.set_visible(false);
         Self {
             app,
             terminal,

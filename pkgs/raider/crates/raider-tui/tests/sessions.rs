@@ -443,3 +443,96 @@ fn slash_resume_and_continue_alias_to_session_picker() {
         }
     }
 }
+
+fn populate_session_with_messages(h: &mut Harness, session_id: &str, count: usize) {
+    use raider_tui::action::HostMessage;
+    h.app.sessions.set_current(Some(session_id.to_string()));
+    let mut msgs: Vec<HostMessage> = Vec::with_capacity(count * 2);
+    for i in 0..count {
+        msgs.push(HostMessage::user(format!("u-{session_id}-{i}")));
+        msgs.push(HostMessage::assistant(format!("a-{session_id}-{i}"), ""));
+    }
+    h.dispatch(Action::Host(HostAction::ReplaceMessages(msgs)));
+}
+
+#[test]
+fn switching_from_large_to_small_session_does_not_panic_on_render() {
+    use raider_tui::SessionEntry;
+    let mut h = Harness::new(140, 40);
+    pin_dummy_model(&mut h);
+    h.app.sessions.set_sessions(vec![
+        SessionEntry::new("big", "Big", "now"),
+        SessionEntry::new("small", "Small", "now"),
+    ]);
+    h.app.sessions.set_current(Some("big".into()));
+    populate_session_with_messages(&mut h, "big", 25);
+    h.draw();
+
+    h.dispatch(Action::View(ViewAction::SwitchSession("small".into())));
+    populate_session_with_messages(&mut h, "small", 1);
+    h.draw();
+    h.dispatch(Action::View(ViewAction::SwitchSession("big".into())));
+    h.draw();
+    h.dispatch(Action::View(ViewAction::SwitchSession("small".into())));
+    h.draw();
+}
+
+#[test]
+fn upsert_tool_call_after_session_switch_does_not_panic() {
+    use raider_tui::action::{HostMessage, ToolCall, ToolStatus};
+    use raider_tui::SessionEntry;
+    let mut h = Harness::new(140, 40);
+    pin_dummy_model(&mut h);
+    h.app.sessions.set_sessions(vec![
+        SessionEntry::new("big", "Big", "now"),
+        SessionEntry::new("small", "Small", "now"),
+    ]);
+    h.app.sessions.set_current(Some("big".into()));
+    populate_session_with_messages(&mut h, "big", 12);
+    h.dispatch(Action::View(ViewAction::SwitchSession("small".into())));
+    h.dispatch(Action::Host(HostAction::ReplaceMessages(vec![
+        HostMessage::assistant("seed", "").with_tool(ToolCall {
+            id: Some("t1".into()),
+            name: "bash".into(),
+            status: ToolStatus::Running,
+            ..Default::default()
+        }),
+    ])));
+    h.dispatch(Action::Host(HostAction::UpsertToolCall(Box::new(
+        ToolCall {
+            id: Some("t1".into()),
+            name: "bash".into(),
+            status: ToolStatus::Completed,
+            ..Default::default()
+        },
+    ))));
+}
+
+#[test]
+fn rapid_session_switching_preserves_render_invariants() {
+    use raider_tui::SessionEntry;
+    let mut h = Harness::new(140, 40);
+    pin_dummy_model(&mut h);
+    h.app.sessions.set_sessions(vec![
+        SessionEntry::new("a", "A", "now"),
+        SessionEntry::new("b", "B", "now"),
+        SessionEntry::new("c", "C", "now"),
+    ]);
+    h.app.sessions.set_current(Some("a".into()));
+    populate_session_with_messages(&mut h, "a", 30);
+    h.dispatch(Action::View(ViewAction::SwitchSession("b".into())));
+    populate_session_with_messages(&mut h, "b", 3);
+    h.dispatch(Action::View(ViewAction::SwitchSession("c".into())));
+    populate_session_with_messages(&mut h, "c", 15);
+
+    for sid in ["a", "b", "c", "a", "c", "b", "a"] {
+        h.dispatch(Action::View(ViewAction::SwitchSession(sid.into())));
+        h.draw();
+        let expected_len = h.app.messages.len();
+        let flags_len = h.app.messages.queued_flags().len();
+        assert_eq!(
+            flags_len, expected_len,
+            "queued_flags length must match current messages.len() after switch to {sid}",
+        );
+    }
+}

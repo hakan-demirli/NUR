@@ -73,6 +73,24 @@ impl MessageStore {
         self.bump_store();
     }
 
+    pub fn take_for_stash(&mut self) -> (Vec<Message>, HashSet<String>) {
+        let messages = std::mem::take(&mut self.messages);
+        let compaction_ids = std::mem::take(&mut self.compaction_message_ids);
+        self.by_server_id.clear();
+        self.tools.clear();
+        self.last_assistant_idx = None;
+        self.streaming_assistant_idx = None;
+        self.bump_store();
+        (messages, compaction_ids)
+    }
+
+    pub fn install(&mut self, messages: Vec<Message>, compaction_ids: HashSet<String>) {
+        self.messages = messages;
+        self.compaction_message_ids = compaction_ids;
+        self.rebuild_indices();
+        self.bump_store();
+    }
+
     pub fn push(&mut self, msg: Message) {
         let idx = self.messages.len();
         self.index_inserted_message(idx, &msg);
@@ -346,7 +364,10 @@ impl MessageStore {
         let Some(loc) = self.tools.get(id).copied() else {
             return;
         };
-        let msg = &mut self.messages[loc.msg_idx];
+        let Some(msg) = self.messages.get_mut(loc.msg_idx) else {
+            self.tools.remove(id);
+            return;
+        };
         msg.tool_calls.retain(|t| t.id.as_deref() != Some(id));
         msg.parts.retain(|p| match p {
             HostMessagePart::Tool(t) => t.id.as_deref() != Some(id),
@@ -363,7 +384,7 @@ impl MessageStore {
         let target = self
             .streaming_assistant_idx
             .or(self.last_assistant_idx)
-            .filter(|&i| self.messages[i].sender == Sender::Assistant);
+            .filter(|&i| self.messages.get(i).map(|m| m.sender) == Some(Sender::Assistant));
         let Some(idx) = target else {
             return false;
         };
@@ -442,8 +463,12 @@ impl MessageStore {
         let Some(loc) = self.tools.get(parent_tool_id).copied() else {
             return;
         };
-        let msg = &mut self.messages[loc.msg_idx];
-        let tool = &mut msg.tool_calls[loc.tool_idx];
+        let Some(msg) = self.messages.get_mut(loc.msg_idx) else {
+            return;
+        };
+        let Some(tool) = msg.tool_calls.get_mut(loc.tool_idx) else {
+            return;
+        };
         let unchanged = tool.current_child == child && tool.child_tool_count == child_tool_count;
         if unchanged {
             return;
@@ -461,11 +486,15 @@ impl MessageStore {
         let Some(loc) = self.tools.get(id).copied() else {
             return false;
         };
-        let msg = &mut self.messages[loc.msg_idx];
+        let Some(msg) = self.messages.get_mut(loc.msg_idx) else {
+            return false;
+        };
+        let Some(initial) = msg.tool_calls.get_mut(loc.tool_idx) else {
+            return false;
+        };
         let new_expanded = {
-            let tool = &mut msg.tool_calls[loc.tool_idx];
-            tool.expanded = !tool.expanded;
-            tool.expanded
+            initial.expanded = !initial.expanded;
+            initial.expanded
         };
         for tool in msg
             .tool_calls
@@ -493,7 +522,9 @@ impl MessageStore {
         let Some(idx) = target else {
             return false;
         };
-        let msg = &mut self.messages[idx];
+        let Some(msg) = self.messages.get_mut(idx) else {
+            return false;
+        };
         if msg.error.as_deref() == Some(error.as_str()) {
             return false;
         }
@@ -506,7 +537,9 @@ impl MessageStore {
         let Some(&idx) = self.by_server_id.get(server_id) else {
             return false;
         };
-        let msg = &mut self.messages[idx];
+        let Some(msg) = self.messages.get_mut(idx) else {
+            return false;
+        };
         if msg.sender != Sender::Assistant {
             return false;
         }
@@ -525,7 +558,9 @@ impl MessageStore {
     ) {
         let target = self.streaming_assistant_idx.or(self.last_assistant_idx);
         if let Some(idx) = target {
-            let msg = &mut self.messages[idx];
+            let Some(msg) = self.messages.get_mut(idx) else {
+                return;
+            };
             if let Some(a) = agent {
                 msg.agent = Some(a);
             }
@@ -892,5 +927,256 @@ mod tests {
         assert_eq!(s.len(), 1);
         assert_eq!(s.messages[0].content, "hello world");
         assert_eq!(s.streaming_assistant_index(), Some(0));
+    }
+
+    #[test]
+    fn take_for_stash_returns_messages_and_clears_indices() {
+        let mut s = MessageStore::new();
+        let mut a = user("first");
+        a.server_id = Some("u-1".into());
+        s.push(a);
+        s.push(assistant_streaming());
+        s.upsert_tool_call(tool("t1", "bash"));
+
+        let (messages, _) = s.take_for_stash();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(s.len(), 0);
+        assert!(s.message_by_server_id("u-1").is_none());
+        assert!(s.tool_location("t1").is_none());
+        assert_eq!(s.streaming_assistant_index(), None);
+        assert_eq!(s.last_assistant_index(), None);
+        assert!(s.queued_flags().is_empty());
+    }
+
+    #[test]
+    fn install_rebuilds_all_indices() {
+        let mut s = MessageStore::new();
+        let mut a = user("first");
+        a.server_id = Some("u-1".into());
+        let mut b = assistant_streaming();
+        b.server_id = Some("a-1".into());
+        b.tool_calls.push(tool("t1", "bash"));
+        let c = user("third");
+
+        s.install(vec![a, b, c], HashSet::new());
+
+        assert_eq!(s.len(), 3);
+        assert!(s.message_by_server_id("u-1").is_some());
+        assert!(s.message_by_server_id("a-1").is_some());
+        let loc = s.tool_location("t1").expect("tool indexed");
+        assert_eq!(loc.msg_idx, 1);
+        assert_eq!(loc.tool_idx, 0);
+        assert_eq!(s.streaming_assistant_index(), Some(1));
+        assert_eq!(s.last_assistant_index(), Some(1));
+        assert_eq!(s.queued_flags().len(), 3);
+    }
+
+    #[test]
+    fn install_smaller_transcript_after_larger_does_not_leave_stale_indices() {
+        let mut s = MessageStore::new();
+        for i in 0..12 {
+            let mut u = user(&format!("u{i}"));
+            u.server_id = Some(format!("u-{i}"));
+            s.push(u);
+            let mut a = assistant_streaming();
+            a.server_id = Some(format!("a-{i}"));
+            a.is_streaming = false;
+            s.push(a);
+        }
+        let mut last_stream = assistant_streaming();
+        last_stream.server_id = Some("a-last".into());
+        s.push(last_stream);
+
+        let (big, big_cids) = s.take_for_stash();
+        assert_eq!(big.len(), 25);
+
+        let small = vec![user("only message")];
+        s.install(small, HashSet::new());
+
+        assert_eq!(s.len(), 1);
+        let qflags = s.queued_flags().to_vec();
+        assert_eq!(
+            qflags.len(),
+            s.len(),
+            "queued_flags must match current message count after install",
+        );
+        assert_eq!(
+            s.streaming_assistant_index(),
+            None,
+            "stream idx must NOT point into the prior transcript",
+        );
+        assert_eq!(
+            s.last_assistant_index(),
+            None,
+            "last assistant idx must NOT point into the prior transcript",
+        );
+
+        assert!(!s.upsert_tool_call(tool("t-new", "bash")));
+
+        s.install(big, big_cids);
+        assert_eq!(s.len(), 25);
+        assert_eq!(s.queued_flags().len(), 25);
+        assert_eq!(s.streaming_assistant_index(), Some(24));
+        assert!(s.message_by_server_id("u-0").is_some());
+        assert!(s.message_by_server_id("a-last").is_some());
+    }
+
+    #[test]
+    fn install_invalidates_queued_flags_cache() {
+        let mut s = MessageStore::new();
+        s.push(user("a"));
+        s.push(assistant_streaming());
+        s.push(user("queued"));
+        let _ = s.queued_flags().to_vec();
+        s.install(vec![user("only")], HashSet::new());
+        let qflags = s.queued_flags();
+        assert_eq!(qflags, &[false]);
+    }
+
+    #[test]
+    fn take_for_stash_invalidates_queued_flags_cache() {
+        let mut s = MessageStore::new();
+        s.push(user("a"));
+        s.push(assistant_streaming());
+        s.push(user("queued"));
+        let _ = s.queued_flags().to_vec();
+        let _ = s.take_for_stash();
+        assert!(s.queued_flags().is_empty());
+    }
+
+    #[test]
+    fn upsert_tool_call_does_not_panic_when_streaming_idx_is_stale() {
+        let mut s = MessageStore::new();
+        s.push(user("only"));
+        s.streaming_assistant_idx = Some(99);
+        s.last_assistant_idx = Some(99);
+        assert!(
+            !s.upsert_tool_call(tool("t", "bash")),
+            "upsert must return false when index is invalid, not panic",
+        );
+    }
+
+    #[test]
+    fn update_task_child_does_not_panic_on_stale_tool_location() {
+        let mut s = MessageStore::new();
+        s.push(assistant_streaming());
+        s.upsert_tool_call(tool("parent", "task"));
+        if let Some(loc) = s.tools.get_mut("parent") {
+            loc.msg_idx = 99;
+            loc.tool_idx = 99;
+        }
+        s.update_task_child("parent", None, 5);
+    }
+
+    #[test]
+    fn toggle_tool_expanded_does_not_panic_on_stale_tool_location() {
+        let mut s = MessageStore::new();
+        s.push(assistant_streaming());
+        s.upsert_tool_call(tool("t", "bash"));
+        if let Some(loc) = s.tools.get_mut("t") {
+            loc.msg_idx = 99;
+        }
+        assert!(
+            !s.toggle_tool_expanded("t"),
+            "must return false on stale location, not panic",
+        );
+    }
+
+    #[test]
+    fn set_last_assistant_error_does_not_panic_on_stale_idx() {
+        let mut s = MessageStore::new();
+        s.push(user("u"));
+        s.last_assistant_idx = Some(99);
+        assert!(!s.set_last_assistant_error("nope".into()));
+    }
+
+    #[test]
+    fn update_last_assistant_meta_does_not_panic_on_stale_idx() {
+        let mut s = MessageStore::new();
+        s.push(user("u"));
+        s.last_assistant_idx = Some(99);
+        s.streaming_assistant_idx = Some(99);
+        s.update_last_assistant_meta(Some("a".into()), None, None, None);
+    }
+
+    #[test]
+    fn mark_assistant_interrupted_does_not_panic_on_stale_index() {
+        let mut s = MessageStore::new();
+        s.push(user("u"));
+        s.by_server_id.insert("a-stale".into(), 99);
+        assert!(!s.mark_assistant_interrupted("a-stale"));
+    }
+
+    #[test]
+    fn round_trip_stash_install_preserves_content() {
+        let mut s = MessageStore::new();
+        let mut a = user("alpha");
+        a.server_id = Some("u-a".into());
+        s.push(a);
+        let mut b = assistant_streaming();
+        b.server_id = Some("a-b".into());
+        b.tool_calls.push(tool("tb", "read"));
+        s.push(b);
+        s.push(user("gamma"));
+
+        let (msgs, cids) = s.take_for_stash();
+        assert_eq!(msgs.len(), 3);
+        s.install(msgs, cids);
+
+        assert_eq!(s.len(), 3);
+        assert_eq!(s.messages[0].content, "alpha");
+        assert_eq!(s.messages[2].content, "gamma");
+        let loc = s.tool_location("tb").expect("tool re-indexed");
+        assert_eq!(loc.msg_idx, 1);
+    }
+
+    #[test]
+    fn switching_between_two_transcripts_repeatedly_stays_consistent() {
+        let mut s = MessageStore::new();
+
+        for i in 0..5 {
+            let mut u = user(&format!("a-u{i}"));
+            u.server_id = Some(format!("au-{i}"));
+            s.push(u);
+        }
+        s.push(assistant_streaming());
+        let (a_msgs, a_cids) = s.take_for_stash();
+
+        s.push(user("b-only"));
+        let (b_msgs, b_cids) = s.take_for_stash();
+
+        for cycle in 0..6 {
+            let (msgs, cids) = if cycle % 2 == 0 {
+                (a_msgs.clone(), a_cids.clone())
+            } else {
+                (b_msgs.clone(), b_cids.clone())
+            };
+            let expected_len = msgs.len();
+            let expected_last_assistant = msgs
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(i, m)| (m.sender == Sender::Assistant).then_some(i));
+            let expected_streaming = msgs
+                .iter()
+                .position(|m| m.sender == Sender::Assistant && m.is_streaming);
+
+            s.install(msgs, cids);
+
+            assert_eq!(s.len(), expected_len, "cycle {cycle}");
+            assert_eq!(s.queued_flags().len(), expected_len, "cycle {cycle}");
+            assert_eq!(
+                s.last_assistant_index(),
+                expected_last_assistant,
+                "cycle {cycle}",
+            );
+            assert_eq!(
+                s.streaming_assistant_index(),
+                expected_streaming,
+                "cycle {cycle}",
+            );
+            let _ = s.upsert_tool_call(tool(&format!("t-cycle-{cycle}"), "bash"));
+        }
     }
 }

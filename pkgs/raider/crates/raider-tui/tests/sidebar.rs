@@ -4,9 +4,77 @@ mod common;
 use common::*;
 
 #[test]
-fn sidebar_hidden_by_default() {
-    let h = Harness::new(120, 30);
-    assert!(!h.app.sidebar.sidebar.visible, "default invisibility");
+fn production_default_sidebar_state_is_hidden() {
+    use raider_tui::app::App;
+    let app = App::new();
+    assert!(
+        !app.sidebar.sidebar.visible,
+        "first launch must NOT show the sidebar; the user opens it on demand \
+         via ctrl+p > toggle sidebar (or /sidebar). The host must never push \
+         visibility either way.",
+    );
+}
+
+#[test]
+fn user_toggle_sidebar_off_is_respected_after_host_data_refresh() {
+    let mut h = Harness::new(120, 30);
+    h.app.sidebar.set_visible(true);
+
+    h.dispatch(Action::View(ViewAction::ToggleSidebar));
+    assert!(!h.app.sidebar.sidebar.visible, "user toggled off");
+
+    h.dispatch(Action::Host(HostAction::SetSidebarTitle(
+        "New Title".into(),
+    )));
+    h.dispatch(Action::Host(HostAction::SetSidebarSubtitle(Some(
+        "ses_abc".into(),
+    ))));
+    h.dispatch(Action::Host(HostAction::SetSidebarSections(vec![
+        SidebarSection::new("Context", ["foo.rs"]),
+    ])));
+
+    assert!(
+        !h.app.sidebar.sidebar.visible,
+        "host data refresh must NOT override the user's hidden preference",
+    );
+}
+
+#[test]
+fn user_toggle_sidebar_on_persists_across_host_data_refresh() {
+    let mut h = Harness::new(120, 30);
+    h.app.sidebar.set_visible(false);
+    h.dispatch(Action::View(ViewAction::ToggleSidebar));
+    assert!(h.app.sidebar.sidebar.visible, "user toggled on");
+
+    h.dispatch(Action::Host(HostAction::SetSidebarTitle("Refresh".into())));
+    h.dispatch(Action::Host(HostAction::SetSidebarSections(vec![
+        SidebarSection::new("Context", ["bar.rs"]),
+    ])));
+
+    assert!(
+        h.app.sidebar.sidebar.visible,
+        "host data refresh must not flip visibility off either",
+    );
+}
+
+#[test]
+fn host_does_not_emit_set_sidebar_visible_during_routine_refresh() {
+    let mut h = Harness::new(120, 30);
+    h.app.sidebar.set_visible(true);
+    h.dispatch(Action::View(ViewAction::ToggleSidebar));
+    assert!(!h.app.sidebar.sidebar.visible);
+
+    for _ in 0..5 {
+        h.dispatch(Action::Host(HostAction::SetSidebarTitle("t".into())));
+        h.dispatch(Action::Host(HostAction::SetSidebarSubtitle(Some(
+            "sub".into(),
+        ))));
+        h.dispatch(Action::Host(HostAction::SetSidebarSections(vec![])));
+        assert!(
+            !h.app.sidebar.sidebar.visible,
+            "any host update must not flip sidebar visible",
+        );
+    }
 }
 
 #[test]
@@ -344,11 +412,11 @@ fn ctrl_b_toggles_sidebar() {
 #[test]
 fn slash_sidebar_toggles_sidebar() {
     let mut h = Harness::new(120, 30);
-    assert!(!h.app.sidebar.sidebar.visible);
+    let initial = h.app.sidebar.sidebar.visible;
     h.dispatch(Action::View(ViewAction::Command("/sidebar".into())));
-    assert!(h.app.sidebar.sidebar.visible);
+    assert_eq!(h.app.sidebar.sidebar.visible, !initial);
     h.dispatch(Action::View(ViewAction::Command("/sidebar".into())));
-    assert!(!h.app.sidebar.sidebar.visible);
+    assert_eq!(h.app.sidebar.sidebar.visible, initial);
     assert!(
         !h.events()
             .iter()

@@ -129,7 +129,6 @@ pub fn sidebar_actions_for_session(
             session.id.as_str().to_string(),
         ))),
         Action::Host(HostAction::SetSidebarSections(sections)),
-        Action::Host(HostAction::SetSidebarVisible(true)),
         Action::Host(HostAction::SetUsage(usage)),
     ];
     actions.shrink_to_fit();

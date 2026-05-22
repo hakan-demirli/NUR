@@ -6,6 +6,7 @@ use common::*;
 #[test]
 fn no_screen_wide_status_bar_is_rendered() {
     let mut h = Harness::new(120, 24);
+    h.app.sidebar.set_visible(false);
     h.draw();
     let snap = h.snapshot();
     let last_nonblank = snap

@@ -109,7 +109,6 @@ fn session_view_actions(
             )));
             actions.push(Action::Host(HostAction::SetSidebarSubtitle(None)));
             actions.push(Action::Host(HostAction::SetSidebarSections(Vec::new())));
-            actions.push(Action::Host(HostAction::SetSidebarVisible(true)));
         }
     }
 
