@@ -26,7 +26,7 @@ use ratatui::{
 };
 
 use raider_host::{default_lua_plugin_paths, HostHandle, OpencodeBackend, Runtime, RuntimeConfig};
-use raider_opencode::{Client, ClientConfig};
+use raider_opencode::{types::session::Session, Client, ClientConfig, SessionId};
 use raider_tui::action::{Action, Lifecycle, Toast, ToastVariant, UserAction, ViewAction};
 use raider_tui::app::App;
 use raider_tui::event::Event as AppEvent;
@@ -44,8 +44,17 @@ struct Cli {
     #[arg(long)]
     directory: Option<PathBuf>,
 
-    #[arg(long)]
+    #[arg(short = 's', long, help = "session id to continue")]
     session: Option<String>,
+
+    #[arg(short = 'c', long = "continue", help = "continue the last session")]
+    continue_session: bool,
+
+    #[arg(
+        long,
+        help = "fork the session when continuing (use with --continue or --session)"
+    )]
+    fork: bool,
 
     #[arg(long, env = "OPENCODE_TOKEN")]
     token: Option<String>,
@@ -60,6 +69,11 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
+
+    if cli.fork && !cli.continue_session && cli.session.is_none() {
+        eprintln!("raider: --fork requires --continue or --session");
+        std::process::exit(2);
+    }
 
     let _log_guard = match logging::init(LoggingConfig::default()) {
         Ok(g) => Some(g),
@@ -86,7 +100,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
     let directory_str = directory.to_string_lossy().to_string();
 
-    let host = match build_host(&cli, &directory_str) {
+    let host = match build_host(&cli, &directory_str).await {
         Ok(h) => h,
         Err(e) => {
             eprintln!("raider: failed to connect to {}: {e}", cli.server);
@@ -155,9 +169,10 @@ fn install_panic_hook() {
     }));
 }
 
-fn build_host(cli: &Cli, directory: &str) -> Result<HostHandle, Box<dyn Error>> {
+async fn build_host(cli: &Cli, directory: &str) -> Result<HostHandle, Box<dyn Error>> {
     let config = ClientConfig::new(&cli.server, directory)?.with_token(cli.token.clone());
     let client = Client::connect(config)?;
+    let initial_session = resolve_initial_session(&client, cli).await?;
     let backend = Arc::new(OpencodeBackend::new(client));
     let lua_plugin_paths = if cli.plugins.is_empty() {
         default_lua_plugin_paths()
@@ -165,13 +180,48 @@ fn build_host(cli: &Cli, directory: &str) -> Result<HostHandle, Box<dyn Error>> 
         cli.plugins.clone()
     };
     let runtime_config = RuntimeConfig {
-        initial_session: cli.session.as_deref().map(raider_opencode::SessionId::new),
+        initial_session,
         workspace_directory: Some(directory.to_string()),
         lua_plugin_paths,
         disable_plugins: cli.no_plugins,
         ..Default::default()
     };
     Ok(Runtime::spawn(backend, runtime_config))
+}
+
+async fn resolve_initial_session(
+    client: &Client,
+    cli: &Cli,
+) -> Result<Option<SessionId>, Box<dyn Error>> {
+    if let Some(session) = &cli.session {
+        let session_id = SessionId::new(session.clone());
+        let current = client.session_get(&session_id).await?;
+        if cli.fork {
+            let forked = client.session_fork(&session_id, None).await?;
+            return Ok(Some(forked.id));
+        }
+        return Ok(Some(current.id));
+    }
+
+    if !cli.continue_session {
+        return Ok(None);
+    }
+
+    let sessions = client.sessions_list().await?;
+    let Some(base_session) = select_continue_session(&sessions) else {
+        return Ok(None);
+    };
+
+    if cli.fork {
+        let forked = client.session_fork(&base_session.id, None).await?;
+        return Ok(Some(forked.id));
+    }
+
+    Ok(Some(base_session.id.clone()))
+}
+
+fn select_continue_session(sessions: &[Session]) -> Option<&Session> {
+    sessions.iter().find(|session| session.parent_id.is_none())
 }
 
 #[derive(Default)]
@@ -751,6 +801,43 @@ fn detect_mode_via_osc() -> ThemeMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn session(id: &str, parent: Option<&str>) -> Session {
+        Session {
+            id: SessionId::new(id),
+            title: id.to_string(),
+            parent_id: parent.map(SessionId::new),
+            time: Default::default(),
+            extra: Default::default(),
+        }
+    }
+
+    #[test]
+    fn cli_accepts_opencode_resume_flags() {
+        let cli = Cli::try_parse_from(["raider", "-c", "--fork"]).unwrap();
+        assert!(cli.continue_session);
+        assert!(cli.fork);
+
+        let cli = Cli::try_parse_from(["raider", "-s", "ses_123"]).unwrap();
+        assert_eq!(cli.session.as_deref(), Some("ses_123"));
+    }
+
+    #[test]
+    fn cli_rejects_single_dash_fork() {
+        assert!(Cli::try_parse_from(["raider", "-fork"]).is_err());
+    }
+
+    #[test]
+    fn continue_session_uses_first_root_session() {
+        let sessions = vec![
+            session("child", Some("parent")),
+            session("root-a", None),
+            session("root-b", None),
+        ];
+
+        let picked = select_continue_session(&sessions).expect("root session");
+        assert_eq!(picked.id.as_str(), "root-a");
+    }
 
     #[test]
     fn screen_snapshot_extracts_single_line_selection() {
