@@ -17,6 +17,7 @@ pub struct MessageStore {
 
     pub tool_block_rects: Vec<(String, ratatui::layout::Rect)>,
     pub user_message_rects: Vec<(String, ratatui::layout::Rect)>,
+    pub last_messages_rect: Option<ratatui::layout::Rect>,
 
     pub show_timestamps: bool,
     pub thinking_hidden: bool,
@@ -39,6 +40,7 @@ impl MessageStore {
             compaction_message_ids: HashSet::new(),
             tool_block_rects: Vec::new(),
             user_message_rects: Vec::new(),
+            last_messages_rect: None,
             show_timestamps: false,
             thinking_hidden: true,
             version: Version::default(),

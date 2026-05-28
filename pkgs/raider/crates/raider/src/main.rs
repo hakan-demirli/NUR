@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     error::Error,
     io,
     path::{Path, PathBuf},
@@ -20,7 +21,7 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     buffer::Buffer,
-    layout::{Position, Rect},
+    layout::Rect,
     style::{Modifier, Style},
     Terminal,
 };
@@ -224,114 +225,225 @@ fn select_continue_session(sessions: &[Session]) -> Option<&Session> {
     sessions.iter().find(|session| session.parent_id.is_none())
 }
 
+fn is_gutter_glyph(c: char) -> bool {
+    c == ' ' || matches!(c, '┃' | '│' | '┊' | '╎' | '┆' | '┇' | '┋')
+}
+
+fn gutter_run_len(line: &str) -> usize {
+    line.chars().take_while(|c| is_gutter_glyph(*c)).count()
+}
+
+fn strip_common_gutter(lines: Vec<String>) -> Vec<String> {
+    let mut has_content = Vec::with_capacity(lines.len());
+    let mut min_run: Option<usize> = None;
+    for line in &lines {
+        let total = line.chars().count();
+        let run = gutter_run_len(line);
+        let content = run < total;
+        has_content.push(content);
+        if content {
+            min_run = Some(min_run.map_or(run, |m| m.min(run)));
+        }
+    }
+    let strip = min_run.unwrap_or(0);
+    lines
+        .into_iter()
+        .zip(has_content)
+        .map(|(line, content)| {
+            if !content {
+                String::new()
+            } else {
+                line.chars().skip(strip).collect()
+            }
+        })
+        .collect()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct SelPoint {
+    line: usize,
+    col: u16,
+}
+
 #[derive(Default)]
 struct MouseSelection {
-    anchor: Option<Position>,
-    focus: Option<Position>,
+    anchor: Option<SelPoint>,
+    focus: Option<SelPoint>,
     dragging: bool,
+    origin_in_messages: bool,
+    last_mouse: Option<(u16, u16)>,
+    line_cache: HashMap<usize, Vec<String>>,
+}
+
+fn point_in_rect(col: u16, row: u16, rect: Rect) -> bool {
+    col >= rect.x
+        && col < rect.x.saturating_add(rect.width)
+        && row >= rect.y
+        && row < rect.y.saturating_add(rect.height)
+}
+
+fn screen_to_content(col: u16, row: u16, mrect: Rect, offset: usize) -> SelPoint {
+    let width = mrect.width.max(1);
+    let last_col = width.saturating_sub(1);
+    let max_x = mrect.x.saturating_add(last_col);
+    let cx = col.clamp(mrect.x, max_x);
+    let max_y = mrect.y.saturating_add(mrect.height.saturating_sub(1));
+    let cy = row.clamp(mrect.y, max_y);
+    let rel_col = cx.saturating_sub(mrect.x).min(last_col);
+    SelPoint {
+        line: offset + cy.saturating_sub(mrect.y) as usize,
+        col: rel_col,
+    }
 }
 
 impl MouseSelection {
-    fn start(&mut self, column: u16, row: u16) {
-        let point = Position { x: column, y: row };
+    fn start(&mut self, column: u16, row: u16, mrect: Rect, offset: usize) {
+        let point = screen_to_content(column, row, mrect, offset);
         self.anchor = Some(point);
         self.focus = Some(point);
         self.dragging = false;
+        self.origin_in_messages = true;
+        self.last_mouse = Some((column, row));
+        self.line_cache.clear();
     }
 
-    fn drag_to(&mut self, column: u16, row: u16) {
+    fn drag_to(&mut self, column: u16, row: u16, mrect: Rect, offset: usize) {
+        if !self.origin_in_messages {
+            return;
+        }
         let Some(anchor) = self.anchor else {
             return;
         };
-        let point = Position { x: column, y: row };
+        let point = screen_to_content(column, row, mrect, offset);
         if point != anchor {
             self.dragging = true;
         }
         self.focus = Some(point);
+        self.last_mouse = Some((column, row));
     }
 
-    fn finish(&mut self, column: u16, row: u16) -> Option<(Position, Position)> {
-        self.drag_to(column, row);
-        let range = match (self.dragging, self.anchor, self.focus) {
-            (true, Some(anchor), Some(focus)) if anchor != focus => Some((anchor, focus)),
-            _ => None,
-        };
-        self.clear();
-        range
+    fn extend_to_line(&mut self, line: usize, col: u16) {
+        if !self.origin_in_messages {
+            return;
+        }
+        if let Some(anchor) = self.anchor {
+            let point = SelPoint { line, col };
+            if point != anchor {
+                self.dragging = true;
+            }
+            self.focus = Some(point);
+        }
     }
 
-    fn clear(&mut self) {
+    fn reset(&mut self) {
         self.anchor = None;
         self.focus = None;
         self.dragging = false;
+        self.origin_in_messages = false;
+        self.last_mouse = None;
+        self.line_cache.clear();
     }
 
-    fn paint(&self, buffer: &mut Buffer) {
-        let Some(range) = selected_range(self.anchor, self.focus, buffer.area) else {
-            return;
-        };
-        if !self.dragging {
+    fn ordered(&self) -> Option<(SelPoint, SelPoint)> {
+        let a = self.anchor?;
+        let f = self.focus?;
+        if (f.line, f.col) < (a.line, a.col) {
+            Some((f, a))
+        } else {
+            Some((a, f))
+        }
+    }
+
+    fn capture(&mut self, snapshot: &ScreenSnapshot, mrect: Rect, offset: usize) {
+        if !self.origin_in_messages {
             return;
         }
+        let width = mrect.width as usize;
+        for ry in 0..mrect.height {
+            let line = offset + ry as usize;
+            let cells = snapshot.row_cells(mrect.x, mrect.y + ry, width);
+            self.line_cache.insert(line, cells);
+        }
+    }
 
+    fn selected_text(&self, width: u16) -> Option<String> {
+        if !self.dragging {
+            return None;
+        }
+        let (start, end) = self.ordered()?;
+        if start == end {
+            return None;
+        }
+        let last_col = width.saturating_sub(1) as usize;
+        let mut lines = Vec::new();
+        for line in start.line..=end.line {
+            let left = if line == start.line {
+                start.col as usize
+            } else {
+                0
+            };
+            let right = if line == end.line {
+                end.col as usize
+            } else {
+                last_col
+            };
+            let mut s = String::new();
+            if left <= right {
+                if let Some(cells) = self.line_cache.get(&line) {
+                    if !cells.is_empty() {
+                        let r = right.min(cells.len().saturating_sub(1));
+                        if left <= r {
+                            for cell in &cells[left..=r] {
+                                s.push_str(cell);
+                            }
+                        }
+                    }
+                }
+            }
+            while s.ends_with(' ') {
+                s.pop();
+            }
+            lines.push(s);
+        }
+        let lines = strip_common_gutter(lines);
+        let text = lines.join("\n");
+        if text.trim().is_empty() {
+            None
+        } else {
+            Some(text)
+        }
+    }
+
+    fn paint(&self, buffer: &mut Buffer, mrect: Rect, offset: usize) {
+        if !self.dragging || mrect.width == 0 || mrect.height == 0 {
+            return;
+        }
+        let Some((start, end)) = self.ordered() else {
+            return;
+        };
+        let width = mrect.width;
+        let last_col = width.saturating_sub(1);
+        let viewport = mrect.height as usize;
         let style = Style::default().add_modifier(Modifier::REVERSED);
-        for y in range.start.y..=range.end.y {
-            let row_start = if y == range.start.y {
-                range.start.x
-            } else {
-                buffer.area.x
-            };
-            let row_end = if y == range.end.y {
-                range.end.x
-            } else {
-                buffer
-                    .area
-                    .x
-                    .saturating_add(buffer.area.width.saturating_sub(1))
-            };
-            for x in row_start..=row_end {
+        for line in start.line..=end.line {
+            if line < offset || line >= offset + viewport {
+                continue;
+            }
+            let y = mrect.y + (line - offset) as u16;
+            let left_col = if line == start.line { start.col } else { 0 };
+            let right_col = if line == end.line { end.col } else { last_col };
+            if left_col > right_col {
+                continue;
+            }
+            let x_start = mrect.x + left_col;
+            let x_end = mrect.x + right_col.min(last_col);
+            for x in x_start..=x_end {
                 if let Some(cell) = buffer.cell_mut((x, y)) {
                     cell.set_style(style);
                 }
             }
         }
     }
-}
-
-#[derive(Clone, Copy)]
-struct SelectionRange {
-    start: Position,
-    end: Position,
-}
-
-fn selected_range(
-    anchor: Option<Position>,
-    focus: Option<Position>,
-    area: Rect,
-) -> Option<SelectionRange> {
-    let anchor = clamp_to_area(anchor?, area)?;
-    let focus = clamp_to_area(focus?, area)?;
-    if anchor == focus {
-        return None;
-    }
-    let (start, end) = if (focus.y, focus.x) < (anchor.y, anchor.x) {
-        (focus, anchor)
-    } else {
-        (anchor, focus)
-    };
-    Some(SelectionRange { start, end })
-}
-
-fn clamp_to_area(point: Position, area: Rect) -> Option<Position> {
-    if area.width == 0 || area.height == 0 {
-        return None;
-    }
-    let max_x = area.x.saturating_add(area.width.saturating_sub(1));
-    let max_y = area.y.saturating_add(area.height.saturating_sub(1));
-    Some(Position {
-        x: point.x.clamp(area.x, max_x),
-        y: point.y.clamp(area.y, max_y),
-    })
 }
 
 #[derive(Clone, Debug)]
@@ -358,53 +470,18 @@ impl ScreenSnapshot {
         Self { area, rows }
     }
 
-    fn selected_text(&self, anchor: Position, focus: Position) -> Option<String> {
-        let range = selected_range(Some(anchor), Some(focus), self.area)?;
-        let mut lines = Vec::new();
-
-        for y in range.start.y..=range.end.y {
-            let Some(row) = self.rows.get((y.saturating_sub(self.area.y)) as usize) else {
-                continue;
-            };
-            if row.is_empty() {
-                lines.push(String::new());
-                continue;
-            }
-
-            let row_start = if y == range.start.y {
-                range.start.x
-            } else {
-                self.area.x
-            };
-            let row_end = if y == range.end.y {
-                range.end.x
-            } else {
-                self.area
-                    .x
-                    .saturating_add(self.area.width.saturating_sub(1))
-            };
-            let start_idx = row_start.saturating_sub(self.area.x) as usize;
-            let end_idx = row_end.saturating_sub(self.area.x) as usize;
-            let end_idx = end_idx.min(row.len().saturating_sub(1));
-
-            let mut line = String::new();
-            if start_idx <= end_idx {
-                for cell in &row[start_idx..=end_idx] {
-                    line.push_str(cell);
+    fn row_cells(&self, x_start: u16, y: u16, width: usize) -> Vec<String> {
+        let mut out = vec![String::from(" "); width];
+        let row_idx = y.saturating_sub(self.area.y) as usize;
+        if let Some(row) = self.rows.get(row_idx) {
+            let base = x_start.saturating_sub(self.area.x) as usize;
+            for (i, slot) in out.iter_mut().enumerate() {
+                if let Some(cell) = row.get(base + i) {
+                    *slot = cell.clone();
                 }
             }
-            while line.ends_with(' ') {
-                line.pop();
-            }
-            lines.push(line);
         }
-
-        let text = lines.join("\n");
-        if text.trim().is_empty() {
-            None
-        } else {
-            Some(text)
-        }
+        out
     }
 }
 
@@ -415,23 +492,79 @@ async fn run_loop<B: ratatui::backend::Backend>(
 ) -> io::Result<()> {
     let mut last_tick = Instant::now();
     let mut selection = MouseSelection::default();
-    let mut last_screen: Option<ScreenSnapshot> = None;
+    let mut last_autoscroll = Instant::now();
     const SCROLL_LINES_PER_TICK: i32 = 3;
+    const AUTO_SCROLL_INTERVAL: Duration = Duration::from_millis(25);
+    const AUTO_SCROLL_STEP: isize = 1;
 
     let mut dirty = true;
 
     loop {
         if dirty {
+            let mut mrect: Option<Rect> = None;
             let frame = terminal.draw(|f| {
                 ui(f, app);
-                selection.paint(f.buffer_mut());
+                let r = app.messages.last_messages_rect;
+                mrect = r;
+                if let Some(r) = r {
+                    selection.paint(f.buffer_mut(), r, app.scroll.list_state.offset());
+                }
             })?;
-            last_screen = Some(ScreenSnapshot::from_buffer(frame.buffer));
+            if let Some(r) = mrect {
+                let snapshot = ScreenSnapshot::from_buffer(frame.buffer);
+                selection.capture(&snapshot, r, app.scroll.list_state.offset());
+            }
             dirty = false;
         }
 
+        let autoscroll_dir: isize = if selection.dragging && selection.origin_in_messages {
+            match (app.messages.last_messages_rect, selection.last_mouse) {
+                (Some(mrect), Some((_, row))) => {
+                    let top = mrect.y;
+                    let bottom = mrect.y.saturating_add(mrect.height.saturating_sub(1));
+                    if row <= top {
+                        -1
+                    } else if row >= bottom {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                _ => 0,
+            }
+        } else {
+            0
+        };
+        if autoscroll_dir != 0 && last_autoscroll.elapsed() >= AUTO_SCROLL_INTERVAL {
+            last_autoscroll = Instant::now();
+            if let Some(mrect) = app.messages.last_messages_rect {
+                let before = app.scroll.list_state.offset();
+                app.scroll
+                    .scroll_messages(autoscroll_dir * AUTO_SCROLL_STEP);
+                let after = app.scroll.list_state.offset();
+                if after != before {
+                    let viewport = mrect.height as usize;
+                    let total = app.scroll.total_visual_lines;
+                    let edge_line = if autoscroll_dir < 0 {
+                        after
+                    } else {
+                        (after + viewport.saturating_sub(1)).min(total.saturating_sub(1))
+                    };
+                    let col = selection
+                        .last_mouse
+                        .map(|(c, r)| screen_to_content(c, r, mrect, after).col)
+                        .unwrap_or(0);
+                    selection.extend_to_line(edge_line, col);
+                    dirty = true;
+                }
+            }
+        }
+
         let demand = app.animation_demand();
-        let tick = demand.idle_poll_or_animation();
+        let mut tick = demand.idle_poll_or_animation();
+        if autoscroll_dir != 0 {
+            tick = tick.min(AUTO_SCROLL_INTERVAL);
+        }
         let timeout = tick
             .checked_sub(last_tick.elapsed())
             .unwrap_or(Duration::ZERO);
@@ -449,7 +582,7 @@ async fn run_loop<B: ratatui::backend::Backend>(
                 }
                 // BUG5: forward resize so the App can invalidate
                 XEvent::Resize(cols, rows) => {
-                    selection.clear();
+                    selection.reset();
                     app.dispatch(Action::Lifecycle(Lifecycle::Resize { cols, rows }));
                     dirty = true;
                 }
@@ -510,20 +643,37 @@ async fn run_loop<B: ratatui::backend::Backend>(
                             }
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
-                            selection.start(mev.column, mev.row);
+                            match app.messages.last_messages_rect {
+                                Some(mrect) if point_in_rect(mev.column, mev.row, mrect) => {
+                                    let offset = app.scroll.list_state.offset();
+                                    selection.start(mev.column, mev.row, mrect, offset);
+                                }
+                                _ => selection.reset(),
+                            }
                         }
                         MouseEventKind::Drag(MouseButton::Left) => {
-                            selection.drag_to(mev.column, mev.row);
-                            dirty = true;
+                            if selection.origin_in_messages {
+                                if let Some(mrect) = app.messages.last_messages_rect {
+                                    let offset = app.scroll.list_state.offset();
+                                    selection.drag_to(mev.column, mev.row, mrect, offset);
+                                    dirty = true;
+                                }
+                            }
                         }
                         MouseEventKind::Up(MouseButton::Left) => {
-                            let copied_selection = if let Some((anchor, focus)) =
-                                selection.finish(mev.column, mev.row)
-                            {
-                                if let Some(text) = last_screen
-                                    .as_ref()
-                                    .and_then(|screen| screen.selected_text(anchor, focus))
-                                {
+                            if selection.origin_in_messages {
+                                if let Some(mrect) = app.messages.last_messages_rect {
+                                    let offset = app.scroll.list_state.offset();
+                                    selection.drag_to(mev.column, mev.row, mrect, offset);
+                                }
+                            }
+                            let copied_selection = if selection.dragging {
+                                let width = app
+                                    .messages
+                                    .last_messages_rect
+                                    .map(|r| r.width)
+                                    .unwrap_or(0);
+                                if let Some(text) = selection.selected_text(width) {
                                     let _ = handle_clipboard_copy(&text);
                                 }
                                 dirty = true;
@@ -531,6 +681,7 @@ async fn run_loop<B: ratatui::backend::Backend>(
                             } else {
                                 false
                             };
+                            selection.reset();
 
                             if !copied_selection {
                                 let sidebar_hit = app
@@ -840,52 +991,148 @@ mod tests {
     }
 
     #[test]
-    fn screen_snapshot_extracts_single_line_selection() {
-        let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 2));
-        buffer.set_string(0, 0, "hello world", Style::default());
+    fn selection_extracts_single_line_and_strips_gutter() {
+        let mrect = Rect::new(0, 0, 20, 1);
+        let mut buffer = Buffer::empty(mrect);
+        buffer.set_string(0, 0, "   hello world", Style::default());
         let snapshot = ScreenSnapshot::from_buffer(&buffer);
 
+        let mut selection = MouseSelection::default();
+        selection.start(3, 0, mrect, 0);
+        selection.drag_to(7, 0, mrect, 0);
+        selection.capture(&snapshot, mrect, 0);
+
         assert_eq!(
-            snapshot
-                .selected_text(Position { x: 0, y: 0 }, Position { x: 4, y: 0 })
-                .as_deref(),
+            selection.selected_text(mrect.width).as_deref(),
             Some("hello")
         );
     }
 
     #[test]
-    fn screen_snapshot_extracts_multiline_selection_backwards() {
-        let mut buffer = Buffer::empty(Rect::new(0, 0, 5, 2));
-        buffer.set_string(0, 0, "abcde", Style::default());
-        buffer.set_string(0, 1, "fghij", Style::default());
+    fn selection_gutter_is_stripped_even_when_dragged_from_col_zero() {
+        let mrect = Rect::new(0, 0, 20, 1);
+        let mut buffer = Buffer::empty(mrect);
+        buffer.set_string(0, 0, "   hello world", Style::default());
         let snapshot = ScreenSnapshot::from_buffer(&buffer);
 
+        let mut selection = MouseSelection::default();
+        selection.start(0, 0, mrect, 0);
+        selection.drag_to(7, 0, mrect, 0);
+        selection.capture(&snapshot, mrect, 0);
+
         assert_eq!(
-            snapshot
-                .selected_text(Position { x: 1, y: 1 }, Position { x: 3, y: 0 })
-                .as_deref(),
-            Some("de\nfg")
+            selection.selected_text(mrect.width).as_deref(),
+            Some("hello")
+        );
+    }
+
+    #[test]
+    fn selection_extracts_multiline_full_lines_backwards_dedented() {
+        let mrect = Rect::new(0, 0, 8, 2);
+        let mut buffer = Buffer::empty(mrect);
+        buffer.set_string(0, 0, "   abcde", Style::default());
+        buffer.set_string(0, 1, "   fghij", Style::default());
+        let snapshot = ScreenSnapshot::from_buffer(&buffer);
+
+        let mut selection = MouseSelection::default();
+        selection.start(7, 1, mrect, 0);
+        selection.drag_to(0, 0, mrect, 0);
+        selection.capture(&snapshot, mrect, 0);
+
+        assert_eq!(
+            selection.selected_text(mrect.width).as_deref(),
+            Some("abcde\nfghij")
+        );
+    }
+
+    #[test]
+    fn selection_preserves_leading_digits_of_line_numbers() {
+        let mrect = Rect::new(0, 0, 12, 1);
+        let mut buffer = Buffer::empty(mrect);
+        buffer.set_string(0, 0, "   10 foo", Style::default());
+        let snapshot = ScreenSnapshot::from_buffer(&buffer);
+
+        let mut selection = MouseSelection::default();
+        selection.start(3, 0, mrect, 0);
+        selection.drag_to(4, 0, mrect, 0);
+        selection.capture(&snapshot, mrect, 0);
+
+        assert_eq!(selection.selected_text(mrect.width).as_deref(), Some("10"));
+    }
+
+    #[test]
+    fn selection_keeps_diff_line_numbers_with_bar_prefix() {
+        let mrect = Rect::new(0, 0, 16, 2);
+        let mut buffer = Buffer::empty(mrect);
+        buffer.set_string(0, 0, "┃  9  ctx_a", Style::default());
+        buffer.set_string(0, 1, "┃ 10  ctx_b", Style::default());
+        let snapshot = ScreenSnapshot::from_buffer(&buffer);
+
+        let mut selection = MouseSelection::default();
+        selection.start(0, 0, mrect, 0);
+        selection.drag_to(15, 1, mrect, 0);
+        selection.capture(&snapshot, mrect, 0);
+
+        assert_eq!(
+            selection.selected_text(mrect.width).as_deref(),
+            Some(" 9  ctx_a\n10  ctx_b")
+        );
+    }
+
+    #[test]
+    fn strip_common_gutter_keeps_relative_indentation() {
+        let lines = vec![
+            "   fn foo() {".to_string(),
+            "       bar();".to_string(),
+            "   }".to_string(),
+        ];
+        assert_eq!(
+            strip_common_gutter(lines),
+            vec![
+                "fn foo() {".to_string(),
+                "    bar();".to_string(),
+                "}".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn selection_uses_content_coordinates_across_scroll() {
+        let mrect = Rect::new(0, 0, 20, 1);
+        let mut selection = MouseSelection::default();
+        selection.start(3, 0, mrect, 5);
+        selection.drag_to(7, 0, mrect, 5);
+
+        let mut buffer = Buffer::empty(mrect);
+        buffer.set_string(0, 0, "   hello world", Style::default());
+        let snapshot = ScreenSnapshot::from_buffer(&buffer);
+        selection.capture(&snapshot, mrect, 5);
+
+        assert_eq!(
+            selection.selected_text(mrect.width).as_deref(),
+            Some("hello")
         );
     }
 
     #[test]
     fn mouse_selection_paints_active_drag() {
-        let mut buffer = Buffer::empty(Rect::new(0, 0, 5, 1));
-        buffer.set_string(0, 0, "abcde", Style::default());
+        let mrect = Rect::new(0, 0, 8, 1);
+        let mut buffer = Buffer::empty(mrect);
+        buffer.set_string(0, 0, "   abcde", Style::default());
         let mut selection = MouseSelection::default();
-        selection.start(1, 0);
-        selection.drag_to(3, 0);
+        selection.start(4, 0, mrect, 0);
+        selection.drag_to(6, 0, mrect, 0);
 
-        selection.paint(&mut buffer);
+        selection.paint(&mut buffer, mrect, 0);
 
         assert!(buffer
-            .cell((2, 0))
+            .cell((5, 0))
             .expect("selected cell")
             .modifier
             .contains(Modifier::REVERSED));
         assert!(!buffer
             .cell((0, 0))
-            .expect("unselected cell")
+            .expect("gutter cell")
             .modifier
             .contains(Modifier::REVERSED));
     }

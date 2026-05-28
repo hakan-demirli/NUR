@@ -727,6 +727,7 @@ pub(crate) fn render_messages(f: &mut Frame, app: &mut App, area: Rect) {
 
     app.scroll.total_visual_lines = items.len();
     app.scroll.last_messages_viewport_rows = area.height as usize;
+    app.messages.last_messages_rect = Some(area);
     if app.scroll.scroll_stick_to_bottom && !items.is_empty() {
         let viewport = area.height as usize;
         let target = items.len().saturating_sub(viewport.max(1));
