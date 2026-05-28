@@ -1,9 +1,12 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Paragraph};
 
+use unicode_width::UnicodeWidthStr;
+
 use crate::app::App;
 use crate::session::SessionStatus;
 use crate::ui::agent::agent_color;
+use crate::ui::path::truncate_path_right;
 use crate::ui::wipe_spinner::wipe_frame_now;
 
 pub(crate) fn render_sub_tray(f: &mut Frame, app: &App, area: Rect) {
@@ -153,14 +156,14 @@ pub(crate) fn retry_status_text(
     let lower = raw.to_ascii_lowercase();
     let mut base = if lower.contains("exceeded your current quota") && lower.contains("gemini") {
         "gemini is way too hot right now".to_string()
-    } else if raw.chars().count() > 80 {
-        let mut out: String = raw.chars().take(80).collect();
+    } else if raw.width() > 80 {
+        let mut out = truncate_path_right(raw, 80);
         out.push_str("...");
         out
     } else {
         raw.to_string()
     };
-    if raw.chars().count() > 120 {
+    if raw.width() > 120 {
         base.push_str(" (click to expand)");
     }
 

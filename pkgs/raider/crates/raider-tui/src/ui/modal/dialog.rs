@@ -1,6 +1,7 @@
 use ratatui::layout::Position;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Clear, List, ListItem, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
 use crate::dialog::{DialogKind, DialogPayload};
@@ -10,6 +11,14 @@ use crate::ui::spinner::spinner_frame;
 use super::plugin_alert::render_plugin_alert_dialog;
 
 const PANEL_WIDTH: u16 = 60;
+
+fn safe_prefix(value: &str, cursor: usize) -> &str {
+    let mut idx = cursor.min(value.len());
+    while idx > 0 && !value.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    &value[..idx]
+}
 
 pub(crate) fn render_dialog(f: &mut Frame, app: &mut App, screen: Rect) {
     let busy_lookup_owned: std::collections::HashMap<String, bool> = app
@@ -89,9 +98,8 @@ pub(crate) fn render_dialog(f: &mut Frame, app: &mut App, screen: Rect) {
         filter_area,
     );
 
-    let filter_cursor_cols = dialog.filter[..dialog.filter_cursor_position]
-        .chars()
-        .count() as u16;
+    let filter_cursor_cols =
+        safe_prefix(&dialog.filter, dialog.filter_cursor_position).width() as u16;
     let filter_cursor_x = filter_area.x.saturating_add(filter_cursor_cols).min(
         filter_area
             .x
@@ -410,7 +418,7 @@ fn render_prompt_dialog(
         Paragraph::new(input_line).style(Style::default().bg(theme.background_panel)),
         input_area,
     );
-    let cursor_cols = value[..cursor_position.min(value.len())].chars().count() as u16;
+    let cursor_cols = safe_prefix(value, cursor_position).width() as u16;
     let cursor_x = input_area.x.saturating_add(cursor_cols).min(
         input_area
             .x

@@ -371,7 +371,27 @@ impl<'a> RenderCtx<'a> {
                 self.flush_current();
                 self.ensure_blockquote_prefix();
             }
-            self.current.push(Span::styled(word.to_string(), style));
+            if word_w > self.width && self.width > 0 {
+                let mut chunk = String::new();
+                let mut chunk_w = 0usize;
+                for ch in word.chars() {
+                    let cw = display_width(&ch.to_string());
+                    if chunk_w + cw > self.width && !chunk.is_empty() {
+                        self.current
+                            .push(Span::styled(std::mem::take(&mut chunk), style));
+                        self.flush_current();
+                        self.ensure_blockquote_prefix();
+                        chunk_w = 0;
+                    }
+                    chunk.push(ch);
+                    chunk_w += cw;
+                }
+                if !chunk.is_empty() {
+                    self.current.push(Span::styled(chunk, style));
+                }
+            } else {
+                self.current.push(Span::styled(word.to_string(), style));
+            }
         }
     }
 
@@ -816,7 +836,8 @@ fn line_is_blank(line: &Line<'_>) -> bool {
 }
 
 fn display_width(s: &str) -> usize {
-    s.chars().count()
+    use unicode_width::UnicodeWidthStr;
+    s.width()
 }
 
 #[cfg(test)]

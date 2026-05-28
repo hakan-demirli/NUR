@@ -397,10 +397,12 @@ impl MessageStore {
                 return idx;
             }
             if let Some(idx) = self.streaming_assistant_idx {
-                if self.messages[idx].server_id.is_none() {
-                    self.messages[idx].server_id = Some(mid.to_string());
-                    self.by_server_id.insert(mid.to_string(), idx);
-                    return idx;
+                if let Some(msg) = self.messages.get_mut(idx) {
+                    if msg.server_id.is_none() {
+                        msg.server_id = Some(mid.to_string());
+                        self.by_server_id.insert(mid.to_string(), idx);
+                        return idx;
+                    }
                 }
             }
         }
@@ -422,12 +424,17 @@ impl MessageStore {
         match message_id {
             Some(mid) => {
                 let target = self.by_server_id.get(mid).copied().filter(|&idx| {
-                    let m = &self.messages[idx];
-                    m.sender == Sender::Assistant && m.is_streaming
+                    self.messages
+                        .get(idx)
+                        .map(|m| m.sender == Sender::Assistant && m.is_streaming)
+                        .unwrap_or(false)
                 });
                 if let Some(idx) = target {
-                    self.messages[idx].is_streaming = false;
-                    self.messages[idx].invalidate_render_cache();
+                    let Some(msg) = self.messages.get_mut(idx) else {
+                        return;
+                    };
+                    msg.is_streaming = false;
+                    msg.invalidate_render_cache();
                     self.recompute_first_streaming_assistant();
                     self.bump_store();
                 }
@@ -435,8 +442,11 @@ impl MessageStore {
             None => {
                 let target = self.streaming_assistant_idx;
                 if let Some(idx) = target {
-                    self.messages[idx].is_streaming = false;
-                    self.messages[idx].invalidate_render_cache();
+                    let Some(msg) = self.messages.get_mut(idx) else {
+                        return;
+                    };
+                    msg.is_streaming = false;
+                    msg.invalidate_render_cache();
                     self.recompute_first_streaming_assistant();
                     self.bump_store();
                 }
@@ -481,7 +491,9 @@ impl MessageStore {
         let Some(idx) = target else {
             return false;
         };
-        let msg = &mut self.messages[idx];
+        let Some(msg) = self.messages.get_mut(idx) else {
+            return false;
+        };
         let existing_pos = msg
             .tool_calls
             .iter()

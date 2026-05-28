@@ -4,7 +4,7 @@ use ratatui::widgets::ListItem;
 use crate::action::ToolCall;
 use crate::model::{ToolHeaderKind, ToolHeaderSlot, ToolRenderCacheEntry};
 use crate::ui::diff::render_diff_block_with_width;
-use crate::ui::path::normalize_path;
+use crate::ui::path::{normalize_path, truncate_to_width};
 use crate::ui::primitives::bar_gap1;
 use crate::ui::spinner::{spinner_frame, tool_uses_running_spinner};
 use crate::ui::syntax::{build_syntax_ctx, SyntaxResources};
@@ -805,13 +805,7 @@ fn format_child_tool_label(child: &crate::action::ChildToolRef) -> String {
     };
     match target {
         Some(t) if !t.is_empty() => {
-            let trimmed = if t.chars().count() > 60 {
-                let mut s: String = t.chars().take(57).collect();
-                s.push('…');
-                s
-            } else {
-                t
-            };
+            let trimmed = truncate_to_width(&t, 60);
             format!("{v} {trimmed}")
         }
         _ => {

@@ -108,32 +108,34 @@ pub(crate) fn render_completion(f: &mut Frame, app: &mut App, input_area: Rect) 
         }
 
         let mut spans: Vec<Span> = Vec::new();
-        let mut last = 0;
-        let mut idxs = c.indices.clone();
-        idxs.sort();
-        for i in &idxs {
-            let i = *i;
-            if i >= c.text.len() {
-                continue;
+        let match_set: std::collections::HashSet<usize> = c.indices.iter().copied().collect();
+        let highlight_style = if is_selected {
+            row_accent
+        } else {
+            accent_style
+        };
+        let normal_style = if is_selected { row_body } else { body_style };
+        let mut group = String::new();
+        let mut group_highlighted: Option<bool> = None;
+        for (byte_pos, ch) in c.text.char_indices() {
+            let highlighted = match_set.contains(&byte_pos);
+            match group_highlighted {
+                Some(prev) if prev == highlighted => {
+                    group.push(ch);
+                }
+                _ => {
+                    if let Some(prev) = group_highlighted {
+                        let style = if prev { highlight_style } else { normal_style };
+                        spans.push(Span::styled(std::mem::take(&mut group), style));
+                    }
+                    group.push(ch);
+                    group_highlighted = Some(highlighted);
+                }
             }
-            if i > last {
-                spans.push(Span::styled(c.text[last..i].to_string(), row_body));
-            }
-            spans.push(Span::styled(
-                c.text[i..=i].to_string(),
-                if is_selected {
-                    row_accent
-                } else {
-                    accent_style
-                },
-            ));
-            last = i + 1;
         }
-        if last < c.text.len() {
-            spans.push(Span::styled(
-                c.text[last..].to_string(),
-                if is_selected { row_body } else { body_style },
-            ));
+        if let Some(prev) = group_highlighted {
+            let style = if prev { highlight_style } else { normal_style };
+            spans.push(Span::styled(group, style));
         }
         let visible_len = c.text.chars().count();
         if pad_target > visible_len {

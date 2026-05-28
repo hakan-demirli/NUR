@@ -6,6 +6,7 @@ use ratatui::widgets::{Block, Paragraph};
 use crate::app::input::{wrap_for_display, WrapResult};
 use crate::app::App;
 use crate::ui::agent::agent_color;
+use crate::ui::path::truncate_path_right;
 
 use super::status_bar::render_status_bar;
 
@@ -44,6 +45,9 @@ fn build_input_spans<'a>(
             }
             None => {
                 i += 1;
+                while i < bytes.len() && !row.is_char_boundary(i) {
+                    i += 1;
+                }
             }
         }
     }
@@ -104,7 +108,7 @@ pub(crate) fn render_prompt(
             if let Some(example) = app.prompt.current_placeholder() {
                 let hint = format!("Ask anything... \"{example}\"");
                 let max = inner_w as usize;
-                let trimmed: String = hint.chars().take(max).collect();
+                let trimmed = truncate_path_right(&hint, max);
                 let line = Line::from(Span::styled(
                     trimmed,
                     Style::default().fg(theme.text_muted).bg(prompt_bg),
