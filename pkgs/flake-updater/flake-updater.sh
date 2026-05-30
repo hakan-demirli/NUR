@@ -1,6 +1,53 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+JOBS=$(nproc)
+
+usage() {
+  echo "Usage: flake-updater [-j [N]]"
+  echo "  -j [N]  Number of parallel jobs (default: nproc = $(nproc))."
+  echo "          If N is omitted, defaults to nproc."
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -j)
+      if [[ ${2:-} =~ ^[0-9]+$ ]]; then
+        JOBS=$2
+        shift 2
+      else
+        JOBS=$(nproc)
+        shift
+      fi
+      ;;
+    -j*)
+      arg=${1#-j}
+      if [[ $arg =~ ^[0-9]+$ ]]; then
+        JOBS=$arg
+        shift
+      else
+        echo "[ERROR] Invalid value for -j: '$arg'"
+        usage
+        exit 1
+      fi
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "[ERROR] Unknown argument: '$1'"
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+if [[ $JOBS -lt 1 ]]; then
+  echo "[ERROR] -j must be >= 1."
+  exit 1
+fi
+
 echo "[DEBUG] Checking upstream for latest NixOS version..."
 TARGET_VERSION=$(git ls-remote --sort=-v:refname https://github.com/NixOS/nixpkgs 'nixos-??.??' | awk '{ sub("^.*/","",$2); print $2; exit}')
 
@@ -10,24 +57,38 @@ if [[ -z $TARGET_VERSION ]]; then
 fi
 
 echo "[DEBUG] Target Version: $TARGET_VERSION"
+echo "[DEBUG] Running with up to $JOBS parallel job(s)."
 
-find . -type f -name "flake.nix" -not -path "*/.git/*" -not -path "*/_deprecated/*" -print0 | while IFS= read -r -d '' flake_file; do
+LOCKFILE=$(mktemp)
+export TARGET_VERSION LOCKFILE
+
+cleanup() { rm -f "$LOCKFILE"; }
+trap cleanup EXIT
+
+process_flake() {
+  local flake_file=$1
+  local dir
   dir=$(dirname "$flake_file")
 
+  local out=""
+  emit() { out+="$1"$'\n'; }
+
+  local CURRENT_VERSION
   CURRENT_VERSION=$(grep -oE "nixos-[0-9]{2}\.[0-9]{2}" "$flake_file" | head -n1)
 
   if [[ -z $CURRENT_VERSION ]]; then
-    echo "[WARN]  Could not determine version for $dir. Skipping."
-    continue
+    emit "[WARN]  Could not determine version for $dir. Skipping."
+    flush "$out"
+    return
   fi
 
-  echo "------------------------------------------------"
-  echo "[DEBUG] Processing: $dir ($CURRENT_VERSION)"
+  emit "------------------------------------------------"
+  emit "[DEBUG] Processing: $dir ($CURRENT_VERSION)"
 
-  VERSION_CHANGED=false
+  local VERSION_CHANGED=false
 
   if [[ $CURRENT_VERSION != "$TARGET_VERSION" ]]; then
-    echo "[DEBUG] Version bump required: $CURRENT_VERSION -> $TARGET_VERSION"
+    emit "[DEBUG] Version bump required: $CURRENT_VERSION -> $TARGET_VERSION"
 
     if [[ $OSTYPE == "darwin"* ]]; then
       sed -i '' "s/$CURRENT_VERSION/$TARGET_VERSION/g" "$flake_file"
@@ -37,33 +98,44 @@ find . -type f -name "flake.nix" -not -path "*/.git/*" -not -path "*/_deprecated
     VERSION_CHANGED=true
   fi
 
-  echo "[DEBUG] Running 'nix flake update'..."
+  emit "[DEBUG] Running 'nix flake update'..."
   if (cd "$dir" && nix flake update &> /dev/null); then
 
-    LOCK_CHANGED=false
+    local LOCK_CHANGED=false
     if ! git diff --quiet "$dir/flake.lock"; then
       LOCK_CHANGED=true
     fi
 
     if [[ $VERSION_CHANGED == "true" ]] || [[ $LOCK_CHANGED == "true" ]]; then
       if [[ $VERSION_CHANGED == "true" ]]; then
-        echo "[INFO]  $dir: Upgraded to $TARGET_VERSION"
+        emit "[INFO]  $dir: Upgraded to $TARGET_VERSION"
       elif [[ $LOCK_CHANGED == "true" ]]; then
-        echo "[INFO]  $dir: Remained on $TARGET_VERSION, but inputs updated (Backports/Fixes)"
+        emit "[INFO]  $dir: Remained on $TARGET_VERSION, but inputs updated (Backports/Fixes)"
       fi
 
-      echo "[DEBUG] Verifying build..."
+      emit "[DEBUG] Verifying build..."
       if (cd "$dir" && nix flake check &> /dev/null); then
-        echo "[SUCCESS] $dir is healthy."
+        emit "[SUCCESS] $dir is healthy."
       else
-        echo "[ERROR]   $dir: Check Failed (Build broken after update)"
+        emit "[ERROR]   $dir: Check Failed (Build broken after update)"
       fi
     else
-      echo "[INFO]  $dir: Already up to date (No changes in version or lockfile)."
+      emit "[INFO]  $dir: Already up to date (No changes in version or lockfile)."
     fi
   else
-    echo "[ERROR]   $dir: 'nix flake update' failed."
+    emit "[ERROR]   $dir: 'nix flake update' failed."
   fi
-done
+
+  flush "$out"
+}
+
+flush() {
+  flock "$LOCKFILE" bash -c 'printf "%s" "$1"' _ "$1"
+}
+
+export -f process_flake flush
+
+find . -type f -name "flake.nix" -not -path "*/.git/*" -not -path "*/_deprecated/*" -print0 \
+  | xargs -0 -r -P "$JOBS" -I {} bash -c 'process_flake "$@"' _ {}
 
 echo "Done."

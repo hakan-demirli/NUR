@@ -10,8 +10,8 @@ in
 pkgs.treefmt.withConfig {
   runtimeInputs = with pkgs; [
     deadnix
-    nixfmt-rfc-style
-    nodePackages.prettier
+    nixfmt
+    prettier
     ruff
     rustfmt
     shfmt

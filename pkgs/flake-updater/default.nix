@@ -8,6 +8,9 @@ pkgs.writeShellApplication {
     pkgs.gawk
     pkgs.gnused
     pkgs.nix
+    pkgs.coreutils
+    pkgs.util-linux
+    pkgs.findutils
   ];
 
   text = builtins.readFile ./flake-updater.sh;

@@ -8,3 +8,6 @@
 **/venv
 **/.direnv
 *fuse_hidden*
+**/.direnv/
+**/.venv/
+**/venv/
