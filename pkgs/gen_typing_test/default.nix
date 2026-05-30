@@ -2,7 +2,7 @@
 pkgs.stdenv.mkDerivation {
   name = "gen_typing_test";
   propagatedBuildInputs = [
-    pkgs.swww
+    pkgs.awww
     (pkgs.python3.withPackages (
       pythonPackages: with pythonPackages; [
         #

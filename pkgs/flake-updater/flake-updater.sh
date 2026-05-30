@@ -130,7 +130,10 @@ process_flake() {
 }
 
 flush() {
-  flock "$LOCKFILE" bash -c 'printf "%s" "$1"' _ "$1"
+  (
+    flock 9
+    printf "%s" "$1"
+  ) 9> "$LOCKFILE"
 }
 
 export -f process_flake flush
