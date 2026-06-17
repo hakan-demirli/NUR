@@ -1,0 +1,21 @@
+{
+  "auth": {
+    "admin_pin_hash": "",
+    "guest_pin_hash": ""
+  },
+  "temps": {
+    "cpu": 49073,
+    "phy": 47200
+  },
+  "fan": {
+    "mode": "auto",
+    "pwm": 128,
+    "rpm": 3640
+  },
+  "wifi_admin": {
+    "ssid": "r01",
+    "password": "rolling-stones-pizza-42"
+  },
+  "wifi_guest": null,
+  "max_brightness": 3124
+}

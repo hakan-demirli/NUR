@@ -1,0 +1,54 @@
+// Global design tokens for the r01 UI.
+//
+// All colours come from themes/dracula.json (the same theme used by the
+// raider-tui project so the whole infra feels visually consistent).
+// build.rs generates `dracula.slint` in OUT_DIR with one Slint global
+// `Dracula` carrying every JSON colour token; we import + alias here.
+
+import "fonts/DejaVuSans.ttf";
+import { Dracula } from "dracula.slint";
+
+export global Theme {
+    // Surfaces
+    out property <color> bg:           Dracula.background;
+    out property <color> surface:      Dracula.background_panel;
+    out property <color> surface_alt:  Dracula.background_element;
+    out property <color> border:       Dracula.border;
+    out property <color> border_sub:   Dracula.border_subtle;
+
+    // Text
+    out property <color> text:         Dracula.text;
+    out property <color> text_dim:     Dracula.text_muted;
+
+    // Accent / semantic
+    out property <color> accent:       Dracula.primary;      // dracula purple
+    out property <color> accent_dim:   Dracula.def_comment;  // muted muted
+    out property <color> accent_alt:   Dracula.accent;       // dracula cyan
+    out property <color> ok:           Dracula.success;
+    out property <color> warn:         Dracula.warning;
+    out property <color> err:          Dracula.error;
+    out property <color> info:         Dracula.info;
+
+    // Tile colours: Admin gets primary (purple), Guest gets secondary (pink).
+    out property <color> admin_tile:   Dracula.primary;
+    out property <color> guest_tile:   Dracula.secondary;
+
+    // Typography (use the embedded font; sizes only).
+    out property <length> font_xs: 11px;
+    out property <length> font_sm: 14px;
+    out property <length> font_md: 18px;
+    out property <length> font_lg: 28px;
+    out property <length> font_xl: 44px;
+    out property <length> font_clock: 64px;
+
+    // Spacing primitives.
+    out property <length> pad_xs:  4px;
+    out property <length> pad_sm:  8px;
+    out property <length> pad_md: 12px;
+    out property <length> pad_lg: 20px;
+
+    // Geometry shared between screens.
+    out property <length> tile_radius:   12px;
+    out property <length> button_radius: 8px;
+    out property <length> touch_min:     44px;
+}

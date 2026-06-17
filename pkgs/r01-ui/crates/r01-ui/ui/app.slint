@@ -1,0 +1,148 @@
+// Top-level window. Owns every screen instance and shows exactly one at a
+// time based on `state.kind`. State transitions are driven from Rust via the
+// public callbacks; this file is purely a presentation layer.
+
+import { Theme } from "theme.slint";
+import { BlankScreen, ScreensaverScreen, LockScreen, PinPadScreen, AdminMenuScreen, GuestMenuScreen, FanScreen, WifiScreen } from "screens.slint";
+
+// Mirrors `Screen` in src/state.rs. Slint has no enums-with-data; we use an
+// int discriminant and per-screen prop blocks fed by the host.
+export enum ScreenKind {
+    blank,
+    screensaver,
+    lockscreen,
+    pinpad,
+    admin_menu,
+    guest_menu,
+    fan,
+    wifi_admin,
+    wifi_guest,
+}
+
+export component AppWindow inherits Window {
+    title: "r01-ui";
+    // Don't pin width/height: on the desktop the user resizes; on the
+    // router the FbdevPlatform sets the size to whatever /dev/fb0 reports
+    // (240x320 portrait, or 320x240 landscape if the DTS rotates the panel).
+    // Screens use layouts so they reflow to either.
+    preferred-width: 320px;
+    preferred-height: 240px;
+    background: Theme.bg;
+    no-frame: false;
+    // Pin every Text element to the embedded font so the slint compiler
+    // never falls back to a system-discovered default (which fails on the
+    // sandbox build where fontconfig isn't available).
+    default-font-family: "DejaVu Sans";
+
+    // ── State (host writes; UI reads) ────────────────────────────────────
+    in property <ScreenKind> screen: ScreenKind.lockscreen;
+
+    // pinpad props
+    in property <string> pin_who;
+    in property <int>    pin_digits_entered;
+    in property <string> pin_message;
+    in property <bool>   pin_locked;
+
+    // fan props
+    in property <string> fan_mode;
+    in property <int>    cpu_milli_c;
+    in property <int>    phy_milli_c;
+    in property <int>    fan_rpm;
+    in property <int>    fan_pwm;
+
+    // wifi props
+    in property <bool>   wifi_available;
+    in property <string> wifi_ssid;
+    in property <string> wifi_password;
+    in property <image>  wifi_qr;
+
+    // screensaver props
+    in property <string> clock_time;     // "23:45"
+    in property <string> clock_date;     // "Tue 3 Jun"
+
+    // ── Host-handled signals ─────────────────────────────────────────────
+    callback wake();
+    callback swipe_up();                 // screensaver → lockscreen
+    callback pick_user(string);          // "admin" | "guest"
+    callback pin_digit(int);
+    callback pin_backspace();
+    callback pin_cancel();
+    callback nav_back();
+    callback nav_lock();
+    callback open_fan();
+    callback open_wifi();
+    callback set_fan_mode(string);
+
+    // Touch anywhere on the active screen resets the inactivity timer; we
+    // surface that as a single signal the host can debounce.
+    callback any_touch();
+
+    // ── Render ───────────────────────────────────────────────────────────
+    if root.screen == ScreenKind.blank: BlankScreen {
+        wake => { root.wake(); root.any_touch(); }
+    }
+
+    if root.screen == ScreenKind.screensaver: ScreensaverScreen {
+        time_str: root.clock_time;
+        date_str: root.clock_date;
+        swipe_up => { root.swipe_up(); root.any_touch(); }
+        touched  => { root.any_touch(); }
+    }
+
+    if root.screen == ScreenKind.lockscreen: LockScreen {
+        admin_chosen => { root.pick_user("admin"); root.any_touch(); }
+        guest_chosen => { root.pick_user("guest"); root.any_touch(); }
+    }
+
+    if root.screen == ScreenKind.pinpad: PinPadScreen {
+        who: root.pin_who;
+        digits_entered: root.pin_digits_entered;
+        message: root.pin_message;
+        locked: root.pin_locked;
+        digit(d)    => { root.pin_digit(d); root.any_touch(); }
+        backspace() => { root.pin_backspace(); root.any_touch(); }
+        cancel()    => { root.pin_cancel(); root.any_touch(); }
+    }
+
+    if root.screen == ScreenKind.admin_menu: AdminMenuScreen {
+        open_fan  => { root.open_fan();  root.any_touch(); }
+        open_wifi => { root.open_wifi(); root.any_touch(); }
+        lock      => { root.nav_lock(); }
+    }
+
+    if root.screen == ScreenKind.guest_menu: GuestMenuScreen {
+        open_wifi => { root.open_wifi(); root.any_touch(); }
+        lock      => { root.nav_lock(); }
+    }
+
+    if root.screen == ScreenKind.fan: FanScreen {
+        current_mode: root.fan_mode;
+        cpu_milli_c: root.cpu_milli_c;
+        phy_milli_c: root.phy_milli_c;
+        rpm: root.fan_rpm;
+        pwm: root.fan_pwm;
+        set_mode(m) => { root.set_fan_mode(m); root.any_touch(); }
+        back()      => { root.nav_back(); root.any_touch(); }
+        lock()      => { root.nav_lock(); }
+    }
+
+    if root.screen == ScreenKind.wifi_admin: WifiScreen {
+        title: "WiFi";
+        available: root.wifi_available;
+        ssid: root.wifi_ssid;
+        password: root.wifi_password;
+        qr_image: root.wifi_qr;
+        back() => { root.nav_back(); root.any_touch(); }
+        lock() => { root.nav_lock(); }
+    }
+
+    if root.screen == ScreenKind.wifi_guest: WifiScreen {
+        title: "Guest WiFi";
+        available: root.wifi_available;
+        ssid: root.wifi_ssid;
+        password: root.wifi_password;
+        qr_image: root.wifi_qr;
+        back() => { root.nav_back(); root.any_touch(); }
+        lock() => { root.nav_lock(); }
+    }
+}

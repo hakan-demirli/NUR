@@ -1,0 +1,432 @@
+// All screens live here. Each is a leaf component the host swaps in/out via
+// the AppState enum in app.slint. Screens are stateless: data and callbacks
+// come in as in/out properties + signals, owned by AppWindow.
+
+import { Theme } from "theme.slint";
+import { Tile, TopBar, PinKey, PrimaryButton } from "widgets.slint";
+
+// ─── BLANK ──────────────────────────────────────────────────────────────────
+// A literal black screen with a single full-surface touch target. Used when
+// the inactivity timer fires; tapping wakes us to the screensaver.
+// We wake on PRESS, not click — that way a finger landing on the panel
+// is enough; the user doesn't have to release at the same spot, and we
+// don't lose a wake to a finger that drags.
+export component BlankScreen inherits Rectangle {
+    callback wake();
+    background: #000;
+    TouchArea {
+        pointer-event(ev) => {
+            if (ev.kind == PointerEventKind.down) { root.wake(); }
+        }
+    }
+}
+
+// ─── SCREENSAVER ────────────────────────────────────────────────────────────
+// Clock face shown right after waking from Blank. Big time, smaller date.
+// To proceed to the lockscreen, the user swipes UP from anywhere on the
+// screen — we measure pressed-y to mouse-y on release and fire swipe_up()
+// when the displacement crosses a threshold. A single tap (no significant
+// upward movement) just resets the idle timer.
+export component ScreensaverScreen inherits Rectangle {
+    in property <string> time_str;   // "23:45"
+    in property <string> date_str;   // "Tue 3 Jun"
+    callback swipe_up();
+    callback touched();              // any touch — resets idle
+
+    background: Theme.bg;
+
+    // Minimum upward distance, in px, to count as a swipe.
+    property <length> swipe_threshold: 60px;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: Theme.pad_md;
+
+        Text {
+            text: root.time_str;
+            font-size: Theme.font_clock;
+            color: Theme.text;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.date_str;
+            font-size: Theme.font_md;
+            color: Theme.text_dim;
+            horizontal-alignment: center;
+        }
+        Rectangle { height: Theme.pad_lg; }
+        Text {
+            text: "swipe up to unlock";
+            font-size: Theme.font_xs;
+            color: Theme.text_dim;
+            horizontal-alignment: center;
+            opacity: 0.6;
+        }
+    }
+
+    ta := TouchArea {
+        pointer-event(ev) => {
+            if (ev.kind == PointerEventKind.down) {
+                root.touched();
+            }
+            if (ev.kind == PointerEventKind.up) {
+                if (ta.pressed-y - ta.mouse-y >= root.swipe_threshold) {
+                    root.swipe_up();
+                }
+                root.touched();
+            }
+        }
+    }
+}
+
+// ─── LOCKSCREEN ─────────────────────────────────────────────────────────────
+// Two big tiles: Admin and Guest. Side-by-side in landscape, stacked in
+// portrait. The layout flips automatically based on the window aspect.
+export component LockScreen inherits Rectangle {
+    callback admin_chosen();
+    callback guest_chosen();
+
+    background: Theme.bg;
+    property <bool> landscape: self.width >= self.height;
+
+    // Landscape: HorizontalLayout
+    if root.landscape: HorizontalLayout {
+        padding: Theme.pad_md;
+        spacing: Theme.pad_md;
+        Tile {
+            label: "Admin";
+            sublabel: "fan · wifi";
+            tile_color: Theme.admin_tile;
+            clicked => { root.admin_chosen(); }
+        }
+        Tile {
+            label: "Guest";
+            sublabel: "wifi";
+            tile_color: Theme.guest_tile;
+            clicked => { root.guest_chosen(); }
+        }
+    }
+
+    // Portrait: VerticalLayout
+    if !root.landscape: VerticalLayout {
+        padding: Theme.pad_md;
+        spacing: Theme.pad_md;
+        Tile {
+            label: "Admin";
+            sublabel: "fan · wifi";
+            tile_color: Theme.admin_tile;
+            clicked => { root.admin_chosen(); }
+        }
+        Tile {
+            label: "Guest";
+            sublabel: "wifi";
+            tile_color: Theme.guest_tile;
+            clicked => { root.guest_chosen(); }
+        }
+    }
+}
+
+// ─── PINPAD ─────────────────────────────────────────────────────────────────
+export component PinPadScreen inherits Rectangle {
+    in property <string> who;        // "Admin" / "Guest"
+    in property <int>    digits_entered;
+    in property <int>    digits_required: 4;
+    in property <string> message;    // status line: "Try again", "Locked 5s…", ""
+    in property <bool>   locked: false;
+
+    callback digit(int);
+    callback backspace();
+    callback cancel();
+
+    background: Theme.bg;
+
+    VerticalLayout {
+        padding: Theme.pad_sm;
+        spacing: Theme.pad_sm;
+
+        TopBar {
+            title: "Unlock — " + root.who;
+            show_lock: false;
+            back => { root.cancel(); }
+        }
+
+        // PIN dots row
+        HorizontalLayout {
+            alignment: center;
+            spacing: Theme.pad_sm;
+            for d[i] in root.digits_required: Rectangle {
+                width: 16px;
+                height: 16px;
+                border-radius: 8px;
+                background: i < root.digits_entered ? Theme.accent : Theme.surface_alt;
+                border-width: 1px;
+                border-color: Theme.border;
+            }
+        }
+
+        Text {
+            text: root.message;
+            color: Theme.err;
+            font-size: Theme.font_sm;
+            horizontal-alignment: center;
+        }
+
+        // 3×4 keypad
+        GridLayout {
+            spacing: Theme.pad_xs;
+            Row { PinKey { label: "1"; enabled: !root.locked; clicked => { root.digit(1); } }
+                  PinKey { label: "2"; enabled: !root.locked; clicked => { root.digit(2); } }
+                  PinKey { label: "3"; enabled: !root.locked; clicked => { root.digit(3); } } }
+            Row { PinKey { label: "4"; enabled: !root.locked; clicked => { root.digit(4); } }
+                  PinKey { label: "5"; enabled: !root.locked; clicked => { root.digit(5); } }
+                  PinKey { label: "6"; enabled: !root.locked; clicked => { root.digit(6); } } }
+            Row { PinKey { label: "7"; enabled: !root.locked; clicked => { root.digit(7); } }
+                  PinKey { label: "8"; enabled: !root.locked; clicked => { root.digit(8); } }
+                  PinKey { label: "9"; enabled: !root.locked; clicked => { root.digit(9); } } }
+            Row { PinKey { label: "✕"; enabled: !root.locked; clicked => { root.cancel(); } }
+                  PinKey { label: "0"; enabled: !root.locked; clicked => { root.digit(0); } }
+                  PinKey { label: "⌫"; enabled: !root.locked; clicked => { root.backspace(); } } }
+        }
+    }
+}
+
+// ─── ADMIN MENU ─────────────────────────────────────────────────────────────
+export component AdminMenuScreen inherits Rectangle {
+    callback open_fan();
+    callback open_wifi();
+    callback lock();
+
+    background: Theme.bg;
+
+    VerticalLayout {
+        padding: Theme.pad_sm;
+        spacing: Theme.pad_sm;
+
+        TopBar { title: "Admin"; show_back: false; lock => { root.lock(); } }
+
+        HorizontalLayout {
+            spacing: Theme.pad_md;
+            padding-left: Theme.pad_md;
+            padding-right: Theme.pad_md;
+            Tile { label: "Fan";  sublabel: "presets"; tile_color: Theme.surface;
+                   clicked => { root.open_fan(); } }
+            Tile { label: "WiFi"; sublabel: "QR + key"; tile_color: Theme.surface;
+                   clicked => { root.open_wifi(); } }
+        }
+    }
+}
+
+// ─── GUEST MENU ─────────────────────────────────────────────────────────────
+export component GuestMenuScreen inherits Rectangle {
+    callback open_wifi();
+    callback lock();
+
+    background: Theme.bg;
+
+    VerticalLayout {
+        padding: Theme.pad_sm;
+        spacing: Theme.pad_sm;
+
+        TopBar { title: "Guest"; show_back: false; lock => { root.lock(); } }
+
+        HorizontalLayout {
+            padding-left: 80px;
+            padding-right: 80px;
+            Tile { label: "WiFi"; sublabel: "QR + key"; tile_color: Theme.guest_tile;
+                   clicked => { root.open_wifi(); } }
+        }
+    }
+}
+
+// ─── FAN SCREEN ─────────────────────────────────────────────────────────────
+export component FanScreen inherits Rectangle {
+    // Pushed in by the host.
+    in property <string> current_mode;      // "auto" / "quiet" / "aggressive" / "manual"
+    in property <int>    cpu_milli_c;       // 49073 = 49.073 °C
+    in property <int>    phy_milli_c;
+    in property <int>    rpm;
+    in property <int>    pwm;               // 0..255
+
+    callback set_mode(string);
+    callback back();
+    callback lock();
+
+    background: Theme.bg;
+
+    VerticalLayout {
+        padding: Theme.pad_sm;
+        spacing: Theme.pad_sm;
+
+        TopBar { title: "Fan"; back => { root.back(); } lock => { root.lock(); } }
+
+        // Live readout strip
+        HorizontalLayout {
+            spacing: Theme.pad_sm;
+            Rectangle {
+                background: Theme.surface;
+                border-radius: Theme.button_radius;
+                VerticalLayout {
+                    padding: Theme.pad_xs;
+                    Text { text: "CPU"; color: Theme.text_dim; font-size: Theme.font_xs;
+                           horizontal-alignment: center; }
+                    Text { text: (root.cpu_milli_c / 1000) + "°"; color: Theme.text;
+                           font-size: Theme.font_md; horizontal-alignment: center; }
+                }
+            }
+            Rectangle {
+                background: Theme.surface;
+                border-radius: Theme.button_radius;
+                VerticalLayout {
+                    padding: Theme.pad_xs;
+                    Text { text: "PHY"; color: Theme.text_dim; font-size: Theme.font_xs;
+                           horizontal-alignment: center; }
+                    Text { text: (root.phy_milli_c / 1000) + "°"; color: Theme.text;
+                           font-size: Theme.font_md; horizontal-alignment: center; }
+                }
+            }
+            Rectangle {
+                background: Theme.surface;
+                border-radius: Theme.button_radius;
+                VerticalLayout {
+                    padding: Theme.pad_xs;
+                    Text { text: "RPM"; color: Theme.text_dim; font-size: Theme.font_xs;
+                           horizontal-alignment: center; }
+                    Text { text: root.rpm; color: Theme.text;
+                           font-size: Theme.font_md; horizontal-alignment: center; }
+                }
+            }
+            Rectangle {
+                background: Theme.surface;
+                border-radius: Theme.button_radius;
+                VerticalLayout {
+                    padding: Theme.pad_xs;
+                    Text { text: "PWM"; color: Theme.text_dim; font-size: Theme.font_xs;
+                           horizontal-alignment: center; }
+                    Text { text: root.pwm; color: Theme.text;
+                           font-size: Theme.font_md; horizontal-alignment: center; }
+                }
+            }
+        }
+
+        // Mode picker — same 4 modes as the LuCI r01 page.
+        // Same pointer-up-with-has-hover gate as the rest of the UI:
+        // the cst3530 emits jittery positions between down and up, so
+        // Slint's `clicked` rejects most legitimate taps.
+        GridLayout {
+            spacing: Theme.pad_sm;
+            Row {
+                Rectangle {
+                    background: root.current_mode == "auto" ? Theme.accent : Theme.surface;
+                    border-radius: Theme.button_radius;
+                    height: Theme.touch_min;
+                    Text { text: "Auto"; color: Theme.text; font-size: Theme.font_md;
+                           horizontal-alignment: center; vertical-alignment: center; }
+                    ta-auto := TouchArea {
+                        pointer-event(ev) => {
+                            if (ev.kind == PointerEventKind.up && ta-auto.has-hover) {
+                                root.set_mode("auto");
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    background: root.current_mode == "quiet" ? Theme.accent : Theme.surface;
+                    border-radius: Theme.button_radius;
+                    height: Theme.touch_min;
+                    Text { text: "Quiet"; color: Theme.text; font-size: Theme.font_md;
+                           horizontal-alignment: center; vertical-alignment: center; }
+                    ta-quiet := TouchArea {
+                        pointer-event(ev) => {
+                            if (ev.kind == PointerEventKind.up && ta-quiet.has-hover) {
+                                root.set_mode("quiet");
+                            }
+                        }
+                    }
+                }
+            }
+            Row {
+                Rectangle {
+                    background: root.current_mode == "aggressive" ? Theme.accent : Theme.surface;
+                    border-radius: Theme.button_radius;
+                    height: Theme.touch_min;
+                    Text { text: "Aggressive"; color: Theme.text; font-size: Theme.font_md;
+                           horizontal-alignment: center; vertical-alignment: center; }
+                    ta-aggr := TouchArea {
+                        pointer-event(ev) => {
+                            if (ev.kind == PointerEventKind.up && ta-aggr.has-hover) {
+                                root.set_mode("aggressive");
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    background: root.current_mode == "manual" ? Theme.accent : Theme.surface;
+                    border-radius: Theme.button_radius;
+                    height: Theme.touch_min;
+                    Text { text: "Manual"; color: Theme.text; font-size: Theme.font_md;
+                           horizontal-alignment: center; vertical-alignment: center; }
+                    ta-manu := TouchArea {
+                        pointer-event(ev) => {
+                            if (ev.kind == PointerEventKind.up && ta-manu.has-hover) {
+                                root.set_mode("manual");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─── WIFI SCREEN ────────────────────────────────────────────────────────────
+// Shared between Admin (router AP) and Guest (guest AP, may be a stub).
+export component WifiScreen inherits Rectangle {
+    in property <string> title;       // "WiFi" or "Guest WiFi"
+    in property <bool>   available;   // false → stub message
+    in property <string> ssid;
+    in property <string> password;
+    in property <image>  qr_image;    // pre-rendered QR (PNG bytes)
+    callback back();
+    callback lock();
+
+    background: Theme.bg;
+
+    VerticalLayout {
+        padding: Theme.pad_sm;
+        spacing: Theme.pad_sm;
+
+        TopBar { title: root.title; back => { root.back(); } lock => { root.lock(); } }
+
+        if !root.available: Text {
+            text: "Not configured.\nUse the admin UI to enable.";
+            color: Theme.text_dim;
+            font-size: Theme.font_sm;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        if root.available: HorizontalLayout {
+            spacing: Theme.pad_md;
+
+            // QR on the left
+            Rectangle {
+                width: 140px;
+                background: Theme.surface;
+                border-radius: Theme.button_radius;
+                Image { source: root.qr_image; width: 130px; height: 130px;
+                        image-fit: contain; }
+            }
+
+            // Text on the right
+            VerticalLayout {
+                spacing: Theme.pad_xs;
+                Text { text: "SSID"; color: Theme.text_dim; font-size: Theme.font_xs; }
+                Text { text: root.ssid; color: Theme.text; font-size: Theme.font_md;
+                       wrap: word-wrap; }
+                Text { text: "Password"; color: Theme.text_dim; font-size: Theme.font_xs; }
+                Text { text: root.password; color: Theme.text; font-size: Theme.font_md;
+                       wrap: word-wrap; }
+            }
+        }
+    }
+}

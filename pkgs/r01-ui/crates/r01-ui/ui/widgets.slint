@@ -1,0 +1,165 @@
+// Re-usable widgets. Kept dumb: they emit signals; screens decide what to do.
+
+import { Theme } from "theme.slint";
+
+// A big colored tile with a centered label. Used on the lockscreen and on
+// the admin/guest menus. Whole surface is the touch target.
+//
+// We fire on POINTER UP rather than `clicked` so the cst3530's noisy
+// position stream (down/up can be 50+ px apart from finger jitter) doesn't
+// cause Slint to reject the tap as a drag. `has-hover` at release gates
+// the action so dragging the finger off the tile before lifting still
+// cancels the tap.
+export component Tile inherits Rectangle {
+    in property <string> label;
+    in property <string> sublabel;
+    in property <color> tile_color: Theme.surface;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    background: tile_color;
+    border-radius: Theme.tile_radius;
+    opacity: enabled ? 1.0 : 0.35;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: Theme.pad_xs;
+        Text {
+            text: root.label;
+            font-size: Theme.font_lg;
+            color: Theme.text;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.sublabel;
+            font-size: Theme.font_xs;
+            color: Theme.text_dim;
+            horizontal-alignment: center;
+            visible: root.sublabel != "";
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        pointer-event(ev) => {
+            if (ev.kind == PointerEventKind.up && ta.has-hover) { root.clicked(); }
+        }
+    }
+}
+
+// Top-of-screen header with a title and optional back/lock affordances.
+export component TopBar inherits Rectangle {
+    in property <string> title;
+    in property <bool> show_back: true;
+    in property <bool> show_lock: true;
+    callback back();
+    callback lock();
+
+    height: 32px;
+    background: transparent;
+
+    HorizontalLayout {
+        padding-left: Theme.pad_sm;
+        padding-right: Theme.pad_sm;
+        spacing: Theme.pad_sm;
+
+        Rectangle {
+            width: 48px;
+            visible: root.show_back;
+            // Use `pressed` not `has-hover`: on touch panels has-hover
+            // sticks after lift because there's no cursor-leave event.
+            background: ta-back.pressed ? Theme.surface_alt : Theme.surface;
+            border-radius: Theme.button_radius;
+            Text { text: "←"; color: Theme.text; font-size: Theme.font_md;
+                   horizontal-alignment: center; vertical-alignment: center; }
+            ta-back := TouchArea {
+                pointer-event(ev) => {
+                    if (ev.kind == PointerEventKind.up && ta-back.has-hover) { root.back(); }
+                }
+            }
+        }
+
+        Text {
+            text: root.title;
+            color: Theme.text;
+            font-size: Theme.font_md;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+            horizontal-stretch: 1;
+        }
+
+        Rectangle {
+            width: 48px;
+            visible: root.show_lock;
+            background: ta-lock.pressed ? Theme.surface_alt : Theme.surface;
+            border-radius: Theme.button_radius;
+            Text { text: "🔒"; color: Theme.text; font-size: Theme.font_md;
+                   horizontal-alignment: center; vertical-alignment: center; }
+            ta-lock := TouchArea {
+                pointer-event(ev) => {
+                    if (ev.kind == PointerEventKind.up && ta-lock.has-hover) { root.lock(); }
+                }
+            }
+        }
+    }
+}
+
+// One of the 12 keys in the pin pad. Fires on pointer-up because the
+// cst3530 driver emits noisy positions between down/up; Slint's `clicked`
+// rejects taps where down/up differ by more than ~5 px, which breaks
+// every other PIN press on this panel.
+//
+// Visual highlight uses `pressed` (true only while finger is down) instead
+// of `has-hover` (which sticks on touch panels because there's no cursor-
+// leave event after lift).
+export component PinKey inherits Rectangle {
+    in property <string> label;
+    in property <bool> wide: false;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    background: ta.pressed ? Theme.surface_alt : Theme.surface;
+    border-radius: Theme.button_radius;
+    opacity: enabled ? 1.0 : 0.4;
+
+    Text {
+        text: root.label;
+        color: Theme.text;
+        font-size: Theme.font_md;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        pointer-event(ev) => {
+            if (ev.kind == PointerEventKind.up && ta.has-hover) { root.clicked(); }
+        }
+    }
+}
+
+// Solid CTA button used inside screens.
+export component PrimaryButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    background: root.enabled
+        ? (ta.pressed ? Theme.accent_dim : Theme.accent)
+        : Theme.surface_alt;
+    border-radius: Theme.button_radius;
+    height: Theme.touch_min;
+
+    Text {
+        text: root.label;
+        color: root.enabled ? #ffffff : Theme.text_dim;
+        font-size: Theme.font_md;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        pointer-event(ev) => {
+            if (ev.kind == PointerEventKind.up && ta.has-hover) { root.clicked(); }
+        }
+    }
+}

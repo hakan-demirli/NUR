@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = ["crates/r01-auth", "crates/r01-ui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/emre/openwrt-be10000"
+
+[workspace.lints.rust]
+# allow(unsafe_code) on its generated vtables. We still won't write `unsafe`
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+option_if_let_else = "allow"
+redundant_pub_crate = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+branches_sharing_code = "allow"
+default_constructed_unit_structs = "allow"
+
+[workspace.dependencies]
+argon2 = { version = "0.5", features = ["std", "password-hash", "rand"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+anyhow = "1"
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
