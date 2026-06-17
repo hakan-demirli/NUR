@@ -5,7 +5,6 @@
   claude-code,
   esbuild,
   fetchFromGitHub,
-  python3Packages,
 }:
 
 let
@@ -56,22 +55,6 @@ let
       platforms = lib.platforms.all;
     };
   });
-
-  opencode-goal = python3Packages.buildPythonApplication {
-    pname = "opencode-goal";
-    version = "0.1.0";
-    pyproject = true;
-
-    src = ./plugins/goal/runtime;
-
-    build-system = [ python3Packages.setuptools ];
-
-    meta = {
-      description = "OpenCode /goal and /loop orchestrator daemon";
-      license = lib.licenses.mit;
-      platforms = lib.platforms.linux;
-    };
-  };
 in
 stdenvNoCC.mkDerivation {
   pname = "opencode-plugins";
@@ -98,23 +81,12 @@ stdenvNoCC.mkDerivation {
       --replace-fail "__OPENCODE_CLAUDE_AUTH_CLAUDE2__" \
       "$out/bin/claude2"
 
-    mkdir -p "$out/plugins/goal"
-    cp plugins/goal/goal.lua "$out/plugins/goal/goal.lua"
-    cp plugins/goal/loop.lua "$out/plugins/goal/loop.lua"
-    substituteInPlace "$out/plugins/goal/goal.lua" \
-      --replace-fail "__OPENCODE_GOAL_BIN__" "${opencode-goal}/bin/opencode-goal"
-    substituteInPlace "$out/plugins/goal/loop.lua" \
-      --replace-fail "__OPENCODE_GOAL_BIN__" "${opencode-goal}/bin/opencode-goal"
-
     runHook postInstall
   '';
 
   passthru.pluginsDir = "${placeholder "out"}/plugins";
   passthru.claude2 = "${placeholder "out"}/bin/claude2";
   passthru.opencode-claude-auth = opencode-claude-auth;
-  passthru.opencode-goal = opencode-goal;
-  passthru.goalLua = "${placeholder "out"}/plugins/goal/goal.lua";
-  passthru.loopLua = "${placeholder "out"}/plugins/goal/loop.lua";
 
   meta = {
     description = "Personal OpenCode plugin collection";
