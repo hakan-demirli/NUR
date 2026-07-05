@@ -14,7 +14,7 @@ index a24b09e..60e79ce 100644
    const previous = activeAccountSource
    activeAccountSource = source
 diff --git a/src/index.ts b/src/index.ts
-index 34c0fad..8a5d20f 100644
+index 34c0fad..925d8c2 100644
 --- a/src/index.ts
 +++ b/src/index.ts
 @@ -1,5 +1,8 @@
@@ -35,7 +35,7 @@ index 34c0fad..8a5d20f 100644
    loadPersistedAccountSource,
    saveAccountSource,
    refreshAccountsList,
-@@ -217,6 +222,212 @@ export function buildRequestHeaders(
+@@ -217,6 +222,208 @@ export function buildRequestHeaders(
  
  const SYNC_INTERVAL = 5 * 60 * 1000 // 5 minutes
  
@@ -237,10 +237,6 @@ index 34c0fad..8a5d20f 100644
 +    reason,
 +  })
 +  const summary = buildAccountStatusSummary()
-+  console.warn(
-+    `opencode-claude-auth: ${sourceLabel(source)} rate-limited (${reason}), ` +
-+      `cooldown ${formatDuration(retryAfterSec * 1000)} [${summary}]`,
-+  )
 +}
 +
 +// --------------------------------------------------------------------
@@ -248,7 +244,7 @@ index 34c0fad..8a5d20f 100644
  const plugin: Plugin = async () => {
    initLogger()
  
-@@ -322,14 +533,6 @@ const plugin: Plugin = async () => {
+@@ -322,14 +529,6 @@ const plugin: Plugin = async () => {
            apiKey: "",
            baseURL: "https://api.anthropic.com/v1",
            async fetch(input: RequestInfo | URL, init?: RequestInit) {
@@ -263,7 +259,7 @@ index 34c0fad..8a5d20f 100644
              const requestInit = init ?? {}
              const bodyStr =
                typeof requestInit.body === "string"
-@@ -343,140 +546,289 @@ const plugin: Plugin = async () => {
+@@ -343,140 +542,281 @@ const plugin: Plugin = async () => {
                } catch {}
              }
  
@@ -332,16 +328,16 @@ index 34c0fad..8a5d20f 100644
 +                  target,
 +                  modelId,
 +                })
-+                console.warn(
-+                  `opencode-claude-auth: ${prevSource ? sourceLabel(prevSource) : "?"}` +
-+                    `${prevCd ? ` (${formatDuration(prevCd.resetAt - Date.now())})` : ""}` +
-+                    ` -> ${sourceLabel(target)} [${buildAccountStatusSummary()}]`,
-+                )
 +              }
 +
 +              const latest = getCachedCredentials()
 +              if (!latest) {
 +                log("fetch_no_credentials", { modelId, source: target })
++                markAccountCooldown(
++                  target,
++                  DEFAULT_RATE_LIMIT_COOLDOWN_SEC,
++                  "no credentials",
++                )
 +                continue
 +              }
 +
@@ -537,28 +533,13 @@ index 34c0fad..8a5d20f 100644
 +                  source: target,
 +                  message,
 +                })
-+                console.warn(
-+                  `opencode-claude-auth: API ${response.status} for ${modelId} ` +
-+                    `via ${sourceLabel(target)}: ${message}`,
-+                )
                }
  
 -              addExcludedBeta(modelId, betaToExclude)
 -              log("fetch_beta_excluded", {
--                modelId,
--                excludedBeta: betaToExclude,
--              })
 +              return transformResponseStream(response)
 +            }
- 
--              // Rebuild headers without the excluded beta and retry
--              const currentCreds = getCachedCredentials()
--              const retryToken = currentCreds?.accessToken ?? latest.accessToken
--              const newExcluded = getExcludedBetas(modelId)
--              const newHeaders = buildRequestHeaders(
--                input,
--                requestInit,
--                retryToken,
++
 +            // All accounts exhausted -- enrich the error for TUI display
 +            if (lastResponse) {
 +              const summary = buildAccountStatusSummary()
@@ -572,18 +553,21 @@ index 34c0fad..8a5d20f 100644
 +
 +              log("fetch_all_accounts_rate_limited", {
                  modelId,
--                newExcluded,
+-                excludedBeta: betaToExclude,
 +                summary,
-+              })
-+              console.warn(
-+                `opencode-claude-auth: all accounts limited ` +
-+                  `[${summary}] next: ${nextLabel} in ${nextDur}`,
-               )
+               })
  
--              response = await fetchWithRetry(requestUrl, {
--                ...requestInit,
--                body,
--                headers: newHeaders,
+-              // Rebuild headers without the excluded beta and retry
+-              const currentCreds = getCachedCredentials()
+-              const retryToken = currentCreds?.accessToken ?? latest.accessToken
+-              const newExcluded = getExcludedBetas(modelId)
+-              const newHeaders = buildRequestHeaders(
+-                input,
+-                requestInit,
+-                retryToken,
+-                modelId,
+-                newExcluded,
+-              )
 +              // Read original body and build enriched error for TUI
 +              const origBody =
 +                lastResponseBody ??
@@ -595,7 +579,11 @@ index 34c0fad..8a5d20f 100644
 +                }
 +                origType = parsed.error?.type ?? origType
 +              } catch {}
-+
+ 
+-              response = await fetchWithRetry(requestUrl, {
+-                ...requestInit,
+-                body,
+-                headers: newHeaders,
 +              const enrichedMessage =
 +                `[${summary}] ${origType} (next: ${nextLabel} in ${nextDur})`
 +              const enrichedBody = JSON.stringify({
