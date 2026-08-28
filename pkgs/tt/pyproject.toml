@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tasktui"
+version = "0.1.0"
+description = "Inline terminal UI for task tracking"
+requires-python = ">=3.12"
+dependencies = [
+  "duckdb>=1.0",
+  "pytz",        # DuckDB needs it to hand TIMESTAMPTZ values back to Python
+  "rich>=13.0",
+]
+
+[project.scripts]
+tt = "tasktui.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tasktui"]
+
+[tool.mypy]
+files = ["src", "tests"]
+strict = true
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+
+[[tool.mypy.overrides]]
+module = "duckdb"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+src = ["src", "tests"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/test_inline.py" = ["BLE001"]
