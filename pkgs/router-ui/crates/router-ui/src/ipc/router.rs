@@ -109,8 +109,13 @@ impl System for RouterSystem {
         match kind {
             WifiKind::Guest => Ok(None),
             WifiKind::Admin => {
-                let ssid = uci_get("wireless.@wifi-iface[0].ssid").ok();
-                let key = uci_get("wireless.@wifi-iface[0].key").ok();
+                let section = if uci_get("wireless.ap_2g.ssid").is_ok() {
+                    "ap_2g"
+                } else {
+                    "@wifi-iface[0]"
+                };
+                let ssid = uci_get(&format!("wireless.{section}.ssid")).ok();
+                let key = uci_get(&format!("wireless.{section}.key")).ok();
                 match (ssid, key) {
                     (Some(s), Some(k)) if !s.is_empty() => Ok(Some(WifiInfo {
                         ssid: s,
