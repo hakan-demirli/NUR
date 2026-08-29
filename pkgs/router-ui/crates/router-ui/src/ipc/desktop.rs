@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use anyhow::{anyhow, Context, Result};
 use log::info;
-use r01_auth::{Argon2Hasher, User};
+use router_auth::{Argon2Hasher, User};
 use serde::{Deserialize, Serialize};
 
 use super::{AuthConfig, FanMode, FanStatus, System, Temps, WifiInfo, WifiKind};
@@ -50,7 +50,7 @@ impl DesktopSystem {
                     rpm: 3640,
                 },
                 wifi_admin: Some(WifiInfo {
-                    ssid: "r01".into(),
+                    ssid: "example-ssid".into(),
                     password: "changeme".into(),
                 }),
                 wifi_guest: None,

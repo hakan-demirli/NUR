@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use log::{info, warn};
 
-use r01_auth::{Argon2Hasher, Authenticator, BackoffPolicy, User, Verdict};
+use router_auth::{Argon2Hasher, Authenticator, BackoffPolicy, User, Verdict};
 
 mod ipc;
 mod platform;
@@ -429,7 +429,7 @@ fn main() -> Result<()> {
         Some("hash") => {
             let pin = args
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: r01-ui hash PIN"))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: router-ui hash PIN"))?;
             let h = Argon2Hasher
                 .hash(&pin)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -439,34 +439,34 @@ fn main() -> Result<()> {
         Some("verify") => {
             let pin = args
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: r01-ui verify PIN HASH"))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: router-ui verify PIN HASH"))?;
             let hash = args
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: r01-ui verify PIN HASH"))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: router-ui verify PIN HASH"))?;
             let ok = Argon2Hasher.verify(&pin, &hash).unwrap_or(false);
             std::process::exit(i32::from(!ok));
         }
         Some("version" | "--version" | "-V") => {
-            println!("r01-ui {}", env!("CARGO_PKG_VERSION"));
+            println!("router-ui {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         Some("help" | "--help" | "-h") => {
             println!(
-                "r01-ui — touchscreen UI for the GL-BE10000 LCD\n\
+                "router-ui — touchscreen UI for the GL-BE10000 LCD\n\
                  \n\
                  USAGE:\n  \
-                 r01-ui                    run the UI (default)\n  \
-                 r01-ui run                same as above\n  \
-                 r01-ui hash <PIN>         print argon2id hash of PIN (used by r01-ui-set-pin)\n  \
-                 r01-ui verify <PIN> <H>   exit 0 iff PIN verifies against hash H\n  \
-                 r01-ui version            print version and exit\n",
+                 router-ui                    run the UI (default)\n  \
+                 router-ui run                same as above\n  \
+                 router-ui hash <PIN>         print argon2id hash of PIN (used by router-ui-set-pin)\n  \
+                 router-ui verify <PIN> <H>   exit 0 iff PIN verifies against hash H\n  \
+                 router-ui version            print version and exit\n",
             );
             return Ok(());
         }
         Some("run") | None => {}
         Some(other) => {
             return Err(anyhow::anyhow!(
-                "unknown subcommand {other:?}; try `r01-ui help`"
+                "unknown subcommand {other:?}; try `router-ui help`"
             ));
         }
     }

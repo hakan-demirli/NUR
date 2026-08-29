@@ -19,7 +19,7 @@ let
   };
 in
 target.rustPlatform.buildRustPackage {
-  pname = "r01-ui";
+  pname = "router-ui";
   version = "0.1.0";
 
   inherit src;
@@ -27,7 +27,7 @@ target.rustPlatform.buildRustPackage {
 
   cargoBuildFlags = [
     "-p"
-    "r01-ui"
+    "router-ui"
     "--no-default-features"
     "--features"
     "router"
@@ -49,7 +49,7 @@ target.rustPlatform.buildRustPackage {
 
   meta = {
     description = "Touchscreen UI for the GL-BE10000 LCD (cross-built aarch64-musl static)";
-    mainProgram = "r01-ui";
+    mainProgram = "router-ui";
     platforms = pkgs.lib.platforms.linux;
   };
 }

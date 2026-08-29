@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn render_succeeds_for_typical_wifi_uri() {
-        let img = render(&wifi_uri("r01", "rolling-stones-pizza-42"), 130);
+        let img = render(&wifi_uri("example-ssid", "rolling-stones-pizza-42"), 130);
         assert!(img.is_some());
         let img = img.unwrap();
         assert!(img.size().width > 0);

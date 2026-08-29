@@ -1,6 +1,6 @@
 [package]
-name = "r01-auth"
-description = "PIN verification and lockout backoff for r01-ui"
+name = "router-auth"
+description = "PIN verification and lockout backoff for router-ui"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

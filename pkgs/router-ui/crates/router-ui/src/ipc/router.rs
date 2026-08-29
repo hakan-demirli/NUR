@@ -70,13 +70,13 @@ fn initd_reload(svc: &str) -> Result<()> {
 impl System for RouterSystem {
     fn auth_config(&self) -> Result<AuthConfig> {
         Ok(AuthConfig {
-            admin_pin_hash: uci_get("r01-ui.auth.admin_pin_hash").unwrap_or_default(),
-            guest_pin_hash: uci_get("r01-ui.auth.guest_pin_hash").unwrap_or_default(),
+            admin_pin_hash: uci_get("router-ui.auth.admin_pin_hash").unwrap_or_default(),
+            guest_pin_hash: uci_get("router-ui.auth.guest_pin_hash").unwrap_or_default(),
         })
     }
 
     fn idle_seconds(&self) -> Option<u32> {
-        uci_get("r01-ui.session.idle_seconds")
+        uci_get("router-ui.session.idle_seconds")
             .ok()
             .and_then(|s| s.parse().ok())
     }
@@ -89,7 +89,7 @@ impl System for RouterSystem {
     }
 
     fn fan_status(&self) -> Result<FanStatus> {
-        let mode_str = uci_get("r01.fan.mode").unwrap_or_else(|_| "auto".into());
+        let mode_str = uci_get("router.fan.mode").unwrap_or_else(|_| "auto".into());
         let mode = FanMode::parse(&mode_str).unwrap_or(FanMode::Auto);
         Ok(FanStatus {
             mode,
@@ -99,9 +99,9 @@ impl System for RouterSystem {
     }
 
     fn set_fan_mode(&self, mode: FanMode) -> Result<()> {
-        uci_set("r01.fan.mode", mode.as_str())?;
-        uci_commit("r01")?;
-        initd_reload("r01-fan")?;
+        uci_set("router.fan.mode", mode.as_str())?;
+        uci_commit("router")?;
+        initd_reload("router-fan")?;
         Ok(())
     }
 

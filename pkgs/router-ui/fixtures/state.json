@@ -13,7 +13,7 @@
     "rpm": 3640
   },
   "wifi_admin": {
-    "ssid": "r01",
+    "ssid": "example-ssid",
     "password": "rolling-stones-pizza-42"
   },
   "wifi_guest": null,

@@ -1,5 +1,5 @@
 [package]
-name = "r01-ui"
+name = "router-ui"
 description = "Touchscreen UI for the GL-BE10000 LCD"
 version.workspace = true
 edition.workspace = true
@@ -11,7 +11,7 @@ repository.workspace = true
 workspace = true
 
 [[bin]]
-name = "r01-ui"
+name = "router-ui"
 path = "src/main.rs"
 
 [features]
@@ -26,7 +26,7 @@ router = [
 ]
 
 [dependencies]
-r01-auth = { path = "../r01-auth" }
+router-auth = { path = "../router-auth" }
 slint = { version = "=1.8.0", default-features = false, features = [
   "std",
   "compat-1-2",

@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use r01_auth::User;
+use router_auth::User;
 
 use crate::ipc::WifiKind;
 
