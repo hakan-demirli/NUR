@@ -35,15 +35,19 @@ impl FanMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Temps {
-    pub cpu: i32,
-    pub phy: i32,
+    #[serde(default)]
+    pub cpu: Option<i32>,
+    #[serde(default)]
+    pub phy: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct FanStatus {
     pub mode: FanMode,
-    pub pwm: u8,
-    pub rpm: u32,
+    #[serde(default)]
+    pub pwm: Option<u8>,
+    #[serde(default)]
+    pub rpm: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

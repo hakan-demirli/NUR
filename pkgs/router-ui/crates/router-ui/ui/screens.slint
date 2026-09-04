@@ -1,16 +1,6 @@
-// All screens live here. Each is a leaf component the host swaps in/out via
-// the AppState enum in app.slint. Screens are stateless: data and callbacks
-// come in as in/out properties + signals, owned by AppWindow.
-
 import { Theme } from "theme.slint";
 import { Tile, TopBar, PinKey, PrimaryButton } from "widgets.slint";
 
-// ─── BLANK ──────────────────────────────────────────────────────────────────
-// A literal black screen with a single full-surface touch target. Used when
-// the inactivity timer fires; tapping wakes us to the screensaver.
-// We wake on PRESS, not click — that way a finger landing on the panel
-// is enough; the user doesn't have to release at the same spot, and we
-// don't lose a wake to a finger that drags.
 export component BlankScreen inherits Rectangle {
     callback wake();
     background: #000;
@@ -21,21 +11,14 @@ export component BlankScreen inherits Rectangle {
     }
 }
 
-// ─── SCREENSAVER ────────────────────────────────────────────────────────────
-// Clock face shown right after waking from Blank. Big time, smaller date.
-// To proceed to the lockscreen, the user swipes UP from anywhere on the
-// screen — we measure pressed-y to mouse-y on release and fire swipe_up()
-// when the displacement crosses a threshold. A single tap (no significant
-// upward movement) just resets the idle timer.
 export component ScreensaverScreen inherits Rectangle {
-    in property <string> time_str;   // "23:45"
-    in property <string> date_str;   // "Tue 3 Jun"
+    in property <string> time_str;
+    in property <string> date_str;
     callback swipe_up();
-    callback touched();              // any touch — resets idle
+    callback touched();
 
     background: Theme.bg;
 
-    // Minimum upward distance, in px, to count as a swipe.
     property <length> swipe_threshold: 60px;
 
     VerticalLayout {
@@ -79,9 +62,6 @@ export component ScreensaverScreen inherits Rectangle {
     }
 }
 
-// ─── LOCKSCREEN ─────────────────────────────────────────────────────────────
-// Two big tiles: Admin and Guest. Side-by-side in landscape, stacked in
-// portrait. The layout flips automatically based on the window aspect.
 export component LockScreen inherits Rectangle {
     callback admin_chosen();
     callback guest_chosen();
@@ -89,7 +69,6 @@ export component LockScreen inherits Rectangle {
     background: Theme.bg;
     property <bool> landscape: self.width >= self.height;
 
-    // Landscape: HorizontalLayout
     if root.landscape: HorizontalLayout {
         padding: Theme.pad_md;
         spacing: Theme.pad_md;
@@ -107,7 +86,6 @@ export component LockScreen inherits Rectangle {
         }
     }
 
-    // Portrait: VerticalLayout
     if !root.landscape: VerticalLayout {
         padding: Theme.pad_md;
         spacing: Theme.pad_md;
@@ -126,12 +104,11 @@ export component LockScreen inherits Rectangle {
     }
 }
 
-// ─── PINPAD ─────────────────────────────────────────────────────────────────
 export component PinPadScreen inherits Rectangle {
-    in property <string> who;        // "Admin" / "Guest"
+    in property <string> who;
     in property <int>    digits_entered;
     in property <int>    digits_required: 4;
-    in property <string> message;    // status line: "Try again", "Locked 5s…", ""
+    in property <string> message;
     in property <bool>   locked: false;
 
     callback digit(int);
@@ -150,7 +127,6 @@ export component PinPadScreen inherits Rectangle {
             back => { root.cancel(); }
         }
 
-        // PIN dots row
         HorizontalLayout {
             alignment: center;
             spacing: Theme.pad_sm;
@@ -171,7 +147,6 @@ export component PinPadScreen inherits Rectangle {
             horizontal-alignment: center;
         }
 
-        // 3×4 keypad
         GridLayout {
             spacing: Theme.pad_xs;
             Row { PinKey { label: "1"; enabled: !root.locked; clicked => { root.digit(1); } }
@@ -190,7 +165,6 @@ export component PinPadScreen inherits Rectangle {
     }
 }
 
-// ─── ADMIN MENU ─────────────────────────────────────────────────────────────
 export component AdminMenuScreen inherits Rectangle {
     callback open_fan();
     callback open_wifi();
@@ -216,7 +190,6 @@ export component AdminMenuScreen inherits Rectangle {
     }
 }
 
-// ─── GUEST MENU ─────────────────────────────────────────────────────────────
 export component GuestMenuScreen inherits Rectangle {
     callback open_wifi();
     callback lock();
@@ -238,14 +211,14 @@ export component GuestMenuScreen inherits Rectangle {
     }
 }
 
-// ─── FAN SCREEN ─────────────────────────────────────────────────────────────
 export component FanScreen inherits Rectangle {
-    // Pushed in by the host.
-    in property <string> current_mode;      // "auto" / "quiet" / "aggressive" / "manual"
-    in property <int>    cpu_milli_c;       // 49073 = 49.073 °C
-    in property <int>    phy_milli_c;
-    in property <int>    rpm;
-    in property <int>    pwm;               // 0..255
+
+    in property <string> current_mode;
+
+    in property <string> cpu_text;
+    in property <string> phy_text;
+    in property <string> rpm_text;
+    in property <string> pwm_text;
 
     callback set_mode(string);
     callback back();
@@ -259,7 +232,6 @@ export component FanScreen inherits Rectangle {
 
         TopBar { title: "Fan"; back => { root.back(); } lock => { root.lock(); } }
 
-        // Live readout strip
         HorizontalLayout {
             spacing: Theme.pad_sm;
             Rectangle {
@@ -269,7 +241,7 @@ export component FanScreen inherits Rectangle {
                     padding: Theme.pad_xs;
                     Text { text: "CPU"; color: Theme.text_dim; font-size: Theme.font_xs;
                            horizontal-alignment: center; }
-                    Text { text: (root.cpu_milli_c / 1000) + "°"; color: Theme.text;
+                    Text { text: root.cpu_text; color: Theme.text;
                            font-size: Theme.font_md; horizontal-alignment: center; }
                 }
             }
@@ -280,7 +252,7 @@ export component FanScreen inherits Rectangle {
                     padding: Theme.pad_xs;
                     Text { text: "PHY"; color: Theme.text_dim; font-size: Theme.font_xs;
                            horizontal-alignment: center; }
-                    Text { text: (root.phy_milli_c / 1000) + "°"; color: Theme.text;
+                    Text { text: root.phy_text; color: Theme.text;
                            font-size: Theme.font_md; horizontal-alignment: center; }
                 }
             }
@@ -291,7 +263,7 @@ export component FanScreen inherits Rectangle {
                     padding: Theme.pad_xs;
                     Text { text: "RPM"; color: Theme.text_dim; font-size: Theme.font_xs;
                            horizontal-alignment: center; }
-                    Text { text: root.rpm; color: Theme.text;
+                    Text { text: root.rpm_text; color: Theme.text;
                            font-size: Theme.font_md; horizontal-alignment: center; }
                 }
             }
@@ -302,16 +274,12 @@ export component FanScreen inherits Rectangle {
                     padding: Theme.pad_xs;
                     Text { text: "PWM"; color: Theme.text_dim; font-size: Theme.font_xs;
                            horizontal-alignment: center; }
-                    Text { text: root.pwm; color: Theme.text;
+                    Text { text: root.pwm_text; color: Theme.text;
                            font-size: Theme.font_md; horizontal-alignment: center; }
                 }
             }
         }
 
-        // Mode picker — same 4 modes as the LuCI router page.
-        // Same pointer-up-with-has-hover gate as the rest of the UI:
-        // the cst3530 emits jittery positions between down and up, so
-        // Slint's `clicked` rejects most legitimate taps.
         GridLayout {
             spacing: Theme.pad_sm;
             Row {
@@ -378,14 +346,12 @@ export component FanScreen inherits Rectangle {
     }
 }
 
-// ─── WIFI SCREEN ────────────────────────────────────────────────────────────
-// Shared between Admin (router AP) and Guest (guest AP, may be a stub).
 export component WifiScreen inherits Rectangle {
-    in property <string> title;       // "WiFi" or "Guest WiFi"
-    in property <bool>   available;   // false → stub message
+    in property <string> title;
+    in property <bool>   available;
     in property <string> ssid;
     in property <string> password;
-    in property <image>  qr_image;    // pre-rendered QR (PNG bytes)
+    in property <image>  qr_image;
     callback back();
     callback lock();
 
@@ -408,7 +374,6 @@ export component WifiScreen inherits Rectangle {
         if root.available: HorizontalLayout {
             spacing: Theme.pad_md;
 
-            // QR on the left
             Rectangle {
                 width: 140px;
                 background: Theme.surface;
@@ -417,7 +382,6 @@ export component WifiScreen inherits Rectangle {
                         image-fit: contain; }
             }
 
-            // Text on the right
             VerticalLayout {
                 spacing: Theme.pad_xs;
                 Text { text: "SSID"; color: Theme.text_dim; font-size: Theme.font_xs; }

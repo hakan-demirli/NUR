@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_lines)]
 
 use std::cell::RefCell;
+#[cfg(feature = "desktop")]
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -18,7 +19,6 @@ mod state;
 use ipc::{FanMode, System, WifiKind};
 use state::{IdlePolicy, IdleTracker, Screen};
 
-// the workspace-wide deny(unsafe_code) doesn't reject the macro expansion.
 #[allow(
     unsafe_code,
     unreachable_pub,
@@ -256,6 +256,22 @@ impl App {
     }
 }
 
+const UNAVAILABLE: &str = "-";
+
+fn milli_c_text(milli_c: Option<i32>) -> slint::SharedString {
+    milli_c.map_or_else(
+        || slint::SharedString::from(UNAVAILABLE),
+        |m| slint::SharedString::from(format!("{:.1}°", f64::from(m) / 1000.0)),
+    )
+}
+
+fn count_text(value: Option<u32>) -> slint::SharedString {
+    value.map_or_else(
+        || slint::SharedString::from(UNAVAILABLE),
+        |v| slint::SharedString::from(v.to_string()),
+    )
+}
+
 fn format_clock_now() -> (String, String) {
     let now = chrono::Local::now();
     (
@@ -302,11 +318,11 @@ fn publish(app: &App, win: &AppWindow) {
 
     if matches!(app.screen, Screen::Fan { .. }) {
         if let (Ok(t), Ok(f)) = (app.sys.temps(), app.sys.fan_status()) {
-            win.set_cpu_milli_c(t.cpu);
-            win.set_phy_milli_c(t.phy);
+            win.set_cpu_text(milli_c_text(t.cpu));
+            win.set_phy_text(milli_c_text(t.phy));
             win.set_fan_mode(slint::SharedString::from(f.mode.as_str()));
-            win.set_fan_rpm(f.rpm as i32);
-            win.set_fan_pwm(i32::from(f.pwm));
+            win.set_fan_rpm_text(count_text(f.rpm));
+            win.set_fan_pwm_text(count_text(f.pwm.map(u32::from)));
         }
     }
     if let Screen::Wifi { kind, .. } = app.screen {
@@ -405,12 +421,18 @@ fn wire(app: &Rc<RefCell<App>>, win: &AppWindow) {
 fn build_system() -> Result<Box<dyn System>> {
     #[cfg(feature = "desktop")]
     {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("fixtures");
+        let dir = std::env::var_os("ROUTER_UI_FIXTURES").map_or_else(
+            || {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .join("fixtures")
+            },
+            PathBuf::from,
+        );
+        log::info!("desktop fixtures: {}", dir.display());
         Ok(Box::new(ipc::DesktopSystem::load(&dir)?))
     }
     #[cfg(all(feature = "router", not(feature = "desktop")))]

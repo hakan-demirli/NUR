@@ -2787,34 +2787,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
-name = "router-auth"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "router-ui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytemuck",
- "chrono",
- "env_logger",
- "evdev",
- "framebuffer",
- "libc",
- "log",
- "qrcode",
- "router-auth",
- "serde",
- "serde_json",
- "slint",
- "slint-build",
-]
-
-[[package]]
 name = "radium"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2944,6 +2916,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
 dependencies = [
  "bytemuck",
+]
+
+[[package]]
+name = "router-auth"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "router-ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "chrono",
+ "env_logger",
+ "evdev",
+ "framebuffer",
+ "libc",
+ "log",
+ "qrcode",
+ "router-auth",
+ "serde",
+ "serde_json",
+ "slint",
+ "slint-build",
 ]
 
 [[package]]

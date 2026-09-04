@@ -15,12 +15,72 @@ let
         root = toString ./.;
         rel = pkgs.lib.removePrefix (root + "/") p;
       in
-      p == root || rel == "Cargo.toml" || rel == "Cargo.lock" || pkgs.lib.hasPrefix "crates" rel;
+      p == root
+      || rel == "Cargo.toml"
+      || rel == "Cargo.lock"
+      || pkgs.lib.hasPrefix "crates" rel
+      || pkgs.lib.hasPrefix "fixtures" rel;
+  };
+  desktopLibs = with pkgs; [
+    fontconfig.lib
+    libxkbcommon
+    wayland
+    libGL
+    libx11
+    libxcursor
+    libxi
+    libxrandr
+  ];
+
+  desktop = pkgs.rustPlatform.buildRustPackage {
+    pname = "router-ui-desktop";
+    version = "0.1.0";
+
+    inherit src;
+    cargoLock.lockFile = ./Cargo.lock;
+
+    cargoBuildFlags = [
+      "-p"
+      "router-ui"
+    ];
+
+    doCheck = false;
+
+    nativeBuildInputs = with pkgs; [
+      pkg-config
+      makeWrapper
+      dejavu_fonts
+    ];
+    buildInputs = desktopLibs;
+
+    FONTCONFIG_FILE = fontsConf;
+
+    preBuild = ''
+      export LD_LIBRARY_PATH="${pkgs.fontconfig.lib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    '';
+
+    postInstall = ''
+      mkdir -p $out/share/router-ui
+      cp -r fixtures $out/share/router-ui/fixtures
+
+      wrapProgram $out/bin/router-ui \
+        --set FONTCONFIG_FILE ${fontsConf} \
+        --set-default ROUTER_UI_FIXTURES $out/share/router-ui/fixtures \
+        --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath desktopLibs}
+    '';
+
+    meta = {
+      description = "router-ui desktop preview (windowed, fixture-backed)";
+      mainProgram = "router-ui";
+      platforms = pkgs.lib.platforms.linux;
+    };
   };
 in
 target.rustPlatform.buildRustPackage {
   pname = "router-ui";
   version = "0.1.0";
+
+  passthru = { inherit desktop; };
 
   inherit src;
   cargoLock.lockFile = ./Cargo.lock;

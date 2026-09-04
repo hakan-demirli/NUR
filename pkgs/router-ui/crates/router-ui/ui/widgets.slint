@@ -1,15 +1,5 @@
-// Re-usable widgets. Kept dumb: they emit signals; screens decide what to do.
-
 import { Theme } from "theme.slint";
 
-// A big colored tile with a centered label. Used on the lockscreen and on
-// the admin/guest menus. Whole surface is the touch target.
-//
-// We fire on POINTER UP rather than `clicked` so the cst3530's noisy
-// position stream (down/up can be 50+ px apart from finger jitter) doesn't
-// cause Slint to reject the tap as a drag. `has-hover` at release gates
-// the action so dragging the finger off the tile before lifting still
-// cancels the tap.
 export component Tile inherits Rectangle {
     in property <string> label;
     in property <string> sublabel;
@@ -47,7 +37,6 @@ export component Tile inherits Rectangle {
     }
 }
 
-// Top-of-screen header with a title and optional back/lock affordances.
 export component TopBar inherits Rectangle {
     in property <string> title;
     in property <bool> show_back: true;
@@ -66,8 +55,7 @@ export component TopBar inherits Rectangle {
         Rectangle {
             width: 48px;
             visible: root.show_back;
-            // Use `pressed` not `has-hover`: on touch panels has-hover
-            // sticks after lift because there's no cursor-leave event.
+
             background: ta-back.pressed ? Theme.surface_alt : Theme.surface;
             border-radius: Theme.button_radius;
             Text { text: "←"; color: Theme.text; font-size: Theme.font_md;
@@ -104,14 +92,6 @@ export component TopBar inherits Rectangle {
     }
 }
 
-// One of the 12 keys in the pin pad. Fires on pointer-up because the
-// cst3530 driver emits noisy positions between down/up; Slint's `clicked`
-// rejects taps where down/up differ by more than ~5 px, which breaks
-// every other PIN press on this panel.
-//
-// Visual highlight uses `pressed` (true only while finger is down) instead
-// of `has-hover` (which sticks on touch panels because there's no cursor-
-// leave event after lift).
 export component PinKey inherits Rectangle {
     in property <string> label;
     in property <bool> wide: false;
@@ -137,7 +117,6 @@ export component PinKey inherits Rectangle {
     }
 }
 
-// Solid CTA button used inside screens.
 export component PrimaryButton inherits Rectangle {
     in property <string> label;
     in property <bool> enabled: true;

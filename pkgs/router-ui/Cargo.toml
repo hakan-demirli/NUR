@@ -10,7 +10,7 @@ license = "GPL-2.0-or-later"
 repository = "https://github.com/emre/openwrt-be10000"
 
 [workspace.lints.rust]
-# allow(unsafe_code) on its generated vtables. We still won't write `unsafe`
+
 unsafe_code = "deny"
 missing_debug_implementations = "warn"
 unreachable_pub = "warn"

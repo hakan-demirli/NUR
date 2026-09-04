@@ -15,7 +15,51 @@ use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferTyp
 use slint::platform::{Platform, PointerEventButton, WindowAdapter, WindowEvent};
 use slint::{LogicalPosition, PhysicalSize, PlatformError};
 
-const FRAME_BUDGET: Duration = Duration::from_millis(33);
+const IDLE_POLL: Duration = Duration::from_millis(16);
+const MIN_POLL: Duration = Duration::from_millis(2);
+
+const STATS_INTERVAL: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Default)]
+struct FrameStats {
+    frames: u32,
+    render_us: u64,
+    worst_us: u64,
+    damaged_px: u64,
+}
+
+#[derive(Debug)]
+struct FrameSummary {
+    frames: u32,
+    avg_us: u64,
+    worst_us: u64,
+    avg_damage_pct: f64,
+}
+
+impl FrameStats {
+    fn record(&mut self, us: u64, damaged_px: u32) {
+        self.frames += 1;
+        self.render_us += us;
+        self.worst_us = self.worst_us.max(us);
+        self.damaged_px += u64::from(damaged_px);
+    }
+
+    fn drain(&mut self, panel_px: u64) -> Option<FrameSummary> {
+        if self.frames == 0 {
+            return None;
+        }
+        let frames = u64::from(self.frames);
+        let out = FrameSummary {
+            frames: self.frames,
+            avg_us: self.render_us / frames,
+            worst_us: self.worst_us,
+            avg_damage_pct: (self.damaged_px as f64 * 100.0)
+                / (frames as f64 * panel_px.max(1) as f64),
+        };
+        *self = Self::default();
+        Some(out)
+    }
+}
 
 const VTCON_PATH: &str = "/sys/class/vtconsole/vtcon1/bind";
 const BL_BRIGHTNESS: &str = "/sys/class/backlight/backlight/brightness";
@@ -113,11 +157,13 @@ impl Platform for FbdevPlatform {
         let width = self.width as usize;
         let height = self.height as usize;
         let stride = self.fb.borrow().fix_screen_info.line_length as usize / 2;
-        let mut scratch = vec![Rgb565Pixel(0); width * height];
-        let mut last_frame = Instant::now();
+        let needed = stride * height;
+
+        let mut stats = FrameStats::default();
+        let mut last_stats = Instant::now();
 
         info!(
-            "event loop starting ({width}x{height} stride={stride} rot_touch={})",
+            "event loop starting ({width}x{height} stride={stride} rot_touch={}, rendering in place)",
             self.rotate_touch
         );
 
@@ -125,18 +171,49 @@ impl Platform for FbdevPlatform {
             self.drain_input();
             slint::platform::update_timers_and_animations();
 
-            let dirty = self.window.draw_if_needed(|renderer| {
-                renderer.render(&mut scratch, width);
-            });
-            if dirty {
-                self.flush(&scratch, stride);
+            let began = Instant::now();
+            let mut damaged_px = 0u32;
+            let drew = {
+                let mut fb = self.fb.borrow_mut();
+                let frame: &mut [u8] = fb.frame.as_mut();
+                let pixels: &mut [Rgb565Pixel] = bytemuck::cast_slice_mut(frame);
+                if pixels.len() < needed {
+                    error!(
+                        "framebuffer too small: {} px < {needed} px needed",
+                        pixels.len()
+                    );
+                    break;
+                }
+                let target = &mut pixels[..needed];
+                self.window.draw_if_needed(|renderer| {
+                    let region = renderer.render(target, stride);
+                    let size = region.bounding_box_size();
+                    damaged_px = size.width.saturating_mul(size.height);
+                })
+            };
+
+            if drew {
+                stats.record(began.elapsed().as_micros() as u64, damaged_px);
             }
 
-            let elapsed = last_frame.elapsed();
-            if elapsed < FRAME_BUDGET {
-                thread::sleep(FRAME_BUDGET - elapsed);
+            if last_stats.elapsed() >= STATS_INTERVAL {
+                if let Some(s) = stats.drain((width * height) as u64) {
+                    info!(
+                        "render: {} frames, avg {:.1} ms, worst {:.1} ms, avg damage {:.1}% of panel",
+                        s.frames,
+                        s.avg_us as f64 / 1000.0,
+                        s.worst_us as f64 / 1000.0,
+                        s.avg_damage_pct
+                    );
+                }
+                last_stats = Instant::now();
             }
-            last_frame = Instant::now();
+
+            let wait = slint::platform::duration_until_next_timer_update()
+                .unwrap_or(IDLE_POLL)
+                .min(IDLE_POLL)
+                .max(MIN_POLL);
+            thread::sleep(wait);
         }
 
         info!("event loop exiting on signal");
@@ -181,33 +258,6 @@ impl FbdevPlatform {
             },
         };
         self.window.dispatch_event(event);
-    }
-
-    fn flush(&self, scratch: &[Rgb565Pixel], stride_u16: usize) {
-        let w = self.width as usize;
-        let h = self.height as usize;
-        let mut fb = self.fb.borrow_mut();
-        let frame = fb.frame.as_mut();
-
-        let all_bytes: &[u8] = bytemuck::cast_slice(scratch);
-
-        if stride_u16 == w {
-            let n = all_bytes.len().min(frame.len());
-            frame[..n].copy_from_slice(&all_bytes[..n]);
-            return;
-        }
-
-        let row_bytes = w * 2;
-        for y in 0..h {
-            let src_off = y * row_bytes;
-            let src_end = src_off + row_bytes;
-            let dst_off = y * stride_u16 * 2;
-            let dst_end = dst_off + row_bytes;
-            if dst_end > frame.len() || src_end > all_bytes.len() {
-                break;
-            }
-            frame[dst_off..dst_end].copy_from_slice(&all_bytes[src_off..src_end]);
-        }
     }
 
     fn cleanup(&self) {

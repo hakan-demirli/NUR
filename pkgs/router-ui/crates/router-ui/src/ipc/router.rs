@@ -1,26 +1,78 @@
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::{anyhow, Context, Result};
+use log::{info, warn};
 
 use super::{AuthConfig, FanMode, FanStatus, System, Temps, WifiInfo, WifiKind};
 
-const SYS_CPU_TEMP: &str = "/sys/class/thermal/thermal_zone0/temp";
-const SYS_PHY_TEMP: &str = "/sys/class/hwmon/hwmon1/temp1_input";
-const SYS_FAN_PWM: &str = "/sys/class/hwmon/hwmon2/pwm1";
-const SYS_FAN_RPM: &str = "/sys/class/hwmon/hwmon2/fan1_input";
 const SYS_BL: &str = "/sys/class/backlight/backlight/brightness";
 const SYS_BL_MAX: &str = "/sys/class/backlight/backlight/max_brightness";
 const SYS_FB_BLANK: &str = "/sys/class/graphics/fb0/blank";
 
-#[derive(Debug, Default)]
-pub struct RouterSystem;
+const HWMON_ROOT: &str = "/sys/class/hwmon";
+
+const HWMON_CPU: &str = "cpu_thermal";
+const HWMON_PHY: &str = "mdio_bus:07";
+const HWMON_FAN: &str = "pwmfan";
+
+#[derive(Debug)]
+pub struct RouterSystem {
+    cpu_temp: Option<PathBuf>,
+    phy_temp: Option<PathBuf>,
+    fan_pwm: Option<PathBuf>,
+    fan_rpm: Option<PathBuf>,
+}
+
+impl Default for RouterSystem {
+    fn default() -> Self {
+        let cpu = hwmon_by_name(HWMON_CPU);
+        let phy = hwmon_by_name(HWMON_PHY);
+        let fan = hwmon_by_name(HWMON_FAN);
+
+        for (label, found) in [("cpu", &cpu), ("phy", &phy), ("fan", &fan)] {
+            match found {
+                Some(p) => info!("hwmon {label}: {}", p.display()),
+                None => warn!("hwmon {label}: not found; readings report unavailable"),
+            }
+        }
+
+        Self {
+            cpu_temp: cpu.map(|p| p.join("temp1_input")),
+            phy_temp: phy.map(|p| p.join("temp1_input")),
+            fan_pwm: fan.as_ref().map(|p| p.join("pwm1")),
+            fan_rpm: fan.map(|p| p.join("fan1_input")),
+        }
+    }
+}
+
+fn hwmon_by_name(name: &str) -> Option<PathBuf> {
+    let mut found = None;
+    for entry in fs::read_dir(HWMON_ROOT).ok()?.flatten() {
+        let dir = entry.path();
+        let Ok(actual) = fs::read_to_string(dir.join("name")) else {
+            continue;
+        };
+        if actual.trim() == name {
+            found = Some(dir);
+            break;
+        }
+    }
+    found
+}
 
 fn read_int(path: &str) -> Result<i64> {
     let s = fs::read_to_string(path).with_context(|| format!("read {path}"))?;
     s.trim()
         .parse::<i64>()
         .with_context(|| format!("parse {path} ({s:?})"))
+}
+
+fn read_opt(path: Option<&PathBuf>) -> Option<i64> {
+    let path = path?;
+    let raw = fs::read_to_string(path).ok()?;
+    raw.trim().parse::<i64>().ok()
 }
 
 fn uci_get(key: &str) -> Result<String> {
@@ -83,8 +135,8 @@ impl System for RouterSystem {
 
     fn temps(&self) -> Result<Temps> {
         Ok(Temps {
-            cpu: read_int(SYS_CPU_TEMP).unwrap_or(0) as i32,
-            phy: read_int(SYS_PHY_TEMP).unwrap_or(0) as i32,
+            cpu: read_opt(self.cpu_temp.as_ref()).map(|v| v as i32),
+            phy: read_opt(self.phy_temp.as_ref()).map(|v| v as i32),
         })
     }
 
@@ -93,8 +145,8 @@ impl System for RouterSystem {
         let mode = FanMode::parse(&mode_str).unwrap_or(FanMode::Auto);
         Ok(FanStatus {
             mode,
-            pwm: read_int(SYS_FAN_PWM).unwrap_or(0).clamp(0, 255) as u8,
-            rpm: read_int(SYS_FAN_RPM).unwrap_or(0).max(0) as u32,
+            pwm: read_opt(self.fan_pwm.as_ref()).map(|v| v.clamp(0, 255) as u8),
+            rpm: read_opt(self.fan_rpm.as_ref()).map(|v| v.max(0) as u32),
         })
     }
 

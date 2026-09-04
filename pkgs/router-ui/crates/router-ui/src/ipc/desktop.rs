@@ -41,13 +41,13 @@ impl DesktopSystem {
             Fixture {
                 auth: AuthConfig::default(),
                 temps: Temps {
-                    cpu: 49_000,
-                    phy: 47_000,
+                    cpu: Some(49_000),
+                    phy: Some(47_000),
                 },
                 fan: FanStatus {
                     mode: FanMode::Auto,
-                    pwm: 128,
-                    rpm: 3640,
+                    pwm: Some(128),
+                    rpm: Some(3640),
                 },
                 wifi_admin: Some(WifiInfo {
                     ssid: "example-ssid".into(),
@@ -99,16 +99,16 @@ impl System for DesktopSystem {
             s.fan.mode = mode;
             match mode {
                 FanMode::Auto => {
-                    s.fan.pwm = 128;
-                    s.fan.rpm = 3640;
+                    s.fan.pwm = Some(128);
+                    s.fan.rpm = Some(3640);
                 }
                 FanMode::Quiet => {
-                    s.fan.pwm = 0;
-                    s.fan.rpm = 0;
+                    s.fan.pwm = Some(0);
+                    s.fan.rpm = Some(0);
                 }
                 FanMode::Aggressive => {
-                    s.fan.pwm = 255;
-                    s.fan.rpm = 6800;
+                    s.fan.pwm = Some(255);
+                    s.fan.rpm = Some(6800);
                 }
                 FanMode::Manual => {}
             }
