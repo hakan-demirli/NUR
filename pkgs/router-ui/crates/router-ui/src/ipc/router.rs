@@ -5,11 +5,23 @@ use std::process::Command;
 use anyhow::{anyhow, Context, Result};
 use log::{info, warn};
 
-use super::{AuthConfig, FanMode, FanStatus, System, Temps, WifiInfo, WifiKind};
+use super::{
+    AuthConfig, Client, Ethernet, EthernetMode, FanMode, FanStatus, System, SystemInfo, Temps,
+    Uplink, WifiInfo, WifiKind,
+};
 
 const SYS_BL: &str = "/sys/class/backlight/backlight/brightness";
 const SYS_BL_MAX: &str = "/sys/class/backlight/backlight/max_brightness";
 const SYS_FB_BLANK: &str = "/sys/class/graphics/fb0/blank";
+
+const CAPTIVE_STATUS: &str = "/usr/libexec/router-captive-status";
+const ETHERNET_STATUS: &str = "/usr/libexec/router-ethernet-status";
+const ETHERNET_APPLY: &str = "/usr/libexec/router-ethernet-apply";
+const DHCP_LEASES: &str = "/tmp/dhcp.leases";
+const PROC_LOADAVG: &str = "/proc/loadavg";
+const PROC_MEMINFO: &str = "/proc/meminfo";
+const PROC_UPTIME: &str = "/proc/uptime";
+const PROC_NET_ARP: &str = "/proc/net/arp";
 
 const HWMON_ROOT: &str = "/sys/class/hwmon";
 
@@ -60,6 +72,45 @@ fn hwmon_by_name(name: &str) -> Option<PathBuf> {
         }
     }
     found
+}
+
+fn status_json(path: &str) -> Option<serde_json::Value> {
+    let out = Command::new(path).output().ok()?;
+    if !out.status.success() {
+        warn!("{path} exited {}", out.status);
+        return None;
+    }
+    serde_json::from_slice(&out.stdout).ok()
+}
+
+fn meminfo_kb(body: &str, key: &str) -> Option<u64> {
+    body.lines()
+        .find(|l| l.starts_with(key))
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|v| v.parse().ok())
+}
+
+fn wireless_macs() -> Vec<String> {
+    let Ok(out) = Command::new("iwinfo").output() else {
+        return Vec::new();
+    };
+    let mut macs = Vec::new();
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        if let Some(rest) = line.trim().strip_prefix("Station ") {
+            macs.push(rest.trim().to_ascii_uppercase());
+        }
+    }
+    macs
+}
+
+fn df_kb(path: &str) -> Option<(u64, u64)> {
+    let out = Command::new("df").arg("-k").arg(path).output().ok()?;
+    let body = String::from_utf8_lossy(&out.stdout);
+    let row = body.lines().nth(1)?;
+    let mut f = row.split_whitespace().skip(1);
+    let total: u64 = f.next()?.parse().ok()?;
+    let used: u64 = f.next()?.parse().ok()?;
+    Some((used, total))
 }
 
 fn read_int(path: &str) -> Result<i64> {
@@ -177,6 +228,154 @@ impl System for RouterSystem {
                 }
             }
         }
+    }
+
+    fn uplink(&self) -> Result<Uplink> {
+        let Some(v) = status_json(CAPTIVE_STATUS) else {
+            return Ok(Uplink::default());
+        };
+        Ok(Uplink {
+            state: v
+                .get("state")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|s| match s {
+                    "online" => Some(super::UplinkState::Online),
+                    "portal" => Some(super::UplinkState::Portal),
+                    "offline" => Some(super::UplinkState::Offline),
+                    _ => None,
+                }),
+            portal_host: v
+                .get("portal_host")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned),
+            bypass_active: v
+                .pointer("/bypass/active")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        })
+    }
+
+    fn ethernet(&self) -> Result<Ethernet> {
+        let Some(v) = status_json(ETHERNET_STATUS) else {
+            return Ok(Ethernet::default());
+        };
+        Ok(Ethernet {
+            mode: v
+                .get("mode")
+                .and_then(serde_json::Value::as_str)
+                .and_then(EthernetMode::parse),
+            wan_up: v.pointer("/wan/up").and_then(serde_json::Value::as_bool),
+            wan_address: v
+                .pointer("/wan/address")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned),
+        })
+    }
+
+    fn set_ethernet_mode(&self, mode: EthernetMode) -> Result<()> {
+        let arg = mode.as_str().to_string();
+        std::thread::spawn(
+            move || match Command::new(ETHERNET_APPLY).arg(&arg).status() {
+                Ok(st) if st.success() => info!("ethernet mode -> {arg}"),
+                Ok(st) => warn!("{ETHERNET_APPLY} {arg} exited {st}"),
+                Err(e) => warn!("{ETHERNET_APPLY} {arg}: {e}"),
+            },
+        );
+        Ok(())
+    }
+
+    fn clients(&self) -> Result<Option<u32>> {
+        Ok(fs::read_to_string(DHCP_LEASES)
+            .ok()
+            .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count() as u32))
+    }
+
+    fn client_list(&self) -> Result<Vec<Client>> {
+        let leases = fs::read_to_string(DHCP_LEASES).unwrap_or_default();
+        let arp = fs::read_to_string(PROC_NET_ARP).unwrap_or_default();
+        let wireless = wireless_macs();
+
+        let mut out = Vec::new();
+        for line in leases.lines() {
+            let mut f = line.split_whitespace();
+            let (_expiry, mac, ip) = (f.next(), f.next(), f.next());
+            let (Some(mac), Some(ip)) = (mac, ip) else {
+                continue;
+            };
+            let name = match f.next() {
+                Some("*") | None => ip.to_string(),
+                Some(n) => n.to_string(),
+            };
+            let mac_up = mac.to_ascii_uppercase();
+            out.push(Client {
+                name,
+                ip: ip.to_string(),
+                mac: mac_up.clone(),
+                wireless: wireless.iter().any(|m| *m == mac_up),
+            });
+        }
+
+        for line in arp.lines().skip(1) {
+            let mut f = line.split_whitespace();
+            let (Some(ip), Some(_hw), Some(flags)) = (f.next(), f.next(), f.next()) else {
+                continue;
+            };
+            if flags == "0x0" {
+                continue;
+            }
+            let Some(mac) = f.next().map(str::to_ascii_uppercase) else {
+                continue;
+            };
+            if mac == "00:00:00:00:00:00" || out.iter().any(|c| c.ip == ip) {
+                continue;
+            }
+            out.push(Client {
+                name: ip.to_string(),
+                ip: ip.to_string(),
+                mac: mac.clone(),
+                wireless: wireless.iter().any(|m| *m == mac),
+            });
+        }
+
+        out.sort_by(|a, b| a.ip.cmp(&b.ip));
+        Ok(out)
+    }
+
+    fn system_info(&self) -> Result<SystemInfo> {
+        let mem = fs::read_to_string(PROC_MEMINFO).unwrap_or_default();
+        let total = meminfo_kb(&mem, "MemTotal:");
+        let avail = meminfo_kb(&mem, "MemAvailable:");
+        let (flash_used, flash_total) = df_kb("/overlay")
+            .or_else(|| df_kb("/"))
+            .map_or((None, None), |(u, t)| (Some(u), Some(t)));
+
+        Ok(SystemInfo {
+            load1: fs::read_to_string(PROC_LOADAVG)
+                .ok()
+                .and_then(|s| s.split_whitespace().next().and_then(|v| v.parse().ok())),
+            mem_used_kb: total.zip(avail).map(|(t, a)| t.saturating_sub(a)),
+            mem_total_kb: total,
+            flash_used_kb: flash_used,
+            flash_total_kb: flash_total,
+            uptime_secs: fs::read_to_string(PROC_UPTIME).ok().and_then(|s| {
+                s.split_whitespace()
+                    .next()
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .map(|v| v as u64)
+            }),
+        })
+    }
+
+    fn reboot(&self) -> Result<()> {
+        info!("reboot requested from touchscreen");
+        std::thread::spawn(|| {
+            let _ = Command::new("reboot").status();
+        });
+        Ok(())
+    }
+
+    fn backlight(&self) -> Result<u32> {
+        Ok(read_int(SYS_BL).unwrap_or(0).max(0) as u32)
     }
 
     fn set_backlight(&self, brightness: u32) -> Result<()> {

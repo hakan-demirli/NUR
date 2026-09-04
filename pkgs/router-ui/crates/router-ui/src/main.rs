@@ -16,7 +16,7 @@ mod platform;
 mod qr;
 mod state;
 
-use ipc::{FanMode, System, WifiKind};
+use ipc::{EthernetMode, FanMode, System, UplinkState, WifiKind};
 use state::{IdlePolicy, IdleTracker, Screen};
 
 #[allow(
@@ -118,6 +118,70 @@ impl App {
         self.screen = Screen::Lockscreen;
     }
 
+    fn on_open_status(&mut self) {
+        if let Screen::AdminMenu { user } = self.screen {
+            self.screen = Screen::Status { user };
+        }
+    }
+
+    fn on_open_clients(&mut self) {
+        if let Screen::AdminMenu { user } = self.screen {
+            self.screen = Screen::Clients { user };
+        }
+    }
+
+    fn on_open_system(&mut self) {
+        if let Screen::AdminMenu { user } = self.screen {
+            self.screen = Screen::SystemInfo {
+                user,
+                reboot_armed: false,
+            };
+        }
+    }
+
+    fn on_brightness_step(&self, delta: i32) {
+        let max = self.sys.max_backlight().unwrap_or(255).max(1);
+        let step = (max / 5).max(1);
+        let current = self.sys.backlight().unwrap_or(max);
+        let next = if delta >= 0 {
+            current.saturating_add(step).min(max)
+        } else {
+            current.saturating_sub(step).max(step)
+        };
+        if let Err(e) = self.sys.set_backlight(next) {
+            warn!("set_backlight: {e}");
+        }
+    }
+
+    fn on_reboot(&mut self) {
+        let Screen::SystemInfo {
+            user,
+            ref mut reboot_armed,
+        } = self.screen
+        else {
+            return;
+        };
+        if *reboot_armed {
+            info!("reboot confirmed");
+            if let Err(e) = self.sys.reboot() {
+                warn!("reboot: {e}");
+            }
+            self.screen = Screen::SystemInfo {
+                user,
+                reboot_armed: false,
+            };
+        } else {
+            *reboot_armed = true;
+        }
+    }
+
+    fn on_set_ethernet_mode(&self, mode: EthernetMode) {
+        match self.sys.set_ethernet_mode(mode) {
+            Ok(()) => info!("ethernet mode -> {}", mode.as_str()),
+            Err(e) => warn!("set_ethernet_mode: {e}"),
+        }
+    }
+
     fn on_open_fan(&mut self) {
         if let Screen::AdminMenu { user } = self.screen {
             self.screen = Screen::Fan { user };
@@ -144,7 +208,10 @@ impl App {
 
     fn on_back(&mut self) {
         self.screen = match &self.screen {
-            Screen::Fan { user } => Screen::AdminMenu { user: *user },
+            Screen::Fan { user }
+            | Screen::Status { user }
+            | Screen::Clients { user }
+            | Screen::SystemInfo { user, .. } => Screen::AdminMenu { user: *user },
             Screen::Wifi { user, .. } => match *user {
                 User::Admin => Screen::AdminMenu { user: User::Admin },
                 User::Guest => Screen::GuestMenu { user: User::Guest },
@@ -289,6 +356,9 @@ const fn screen_kind(s: &Screen) -> ScreenKind {
         Screen::AdminMenu { .. } => ScreenKind::AdminMenu,
         Screen::GuestMenu { .. } => ScreenKind::GuestMenu,
         Screen::Fan { .. } => ScreenKind::Fan,
+        Screen::Status { .. } => ScreenKind::Status,
+        Screen::Clients { .. } => ScreenKind::Clients,
+        Screen::SystemInfo { .. } => ScreenKind::System,
         Screen::Wifi {
             kind: WifiKind::Admin,
             ..
@@ -300,8 +370,134 @@ const fn screen_kind(s: &Screen) -> ScreenKind {
     }
 }
 
+fn publish_uplink(app: &App, win: &AppWindow) {
+    let uplink = app.sys.uplink().unwrap_or_default();
+    let (label, color) = match uplink.state {
+        Some(UplinkState::Online) => ("Online", slint::Color::from_rgb_u8(0x3a, 0x8a, 0x3a)),
+        Some(UplinkState::Portal) => ("Portal", slint::Color::from_rgb_u8(0xc0, 0x8b, 0x1e)),
+        Some(UplinkState::Offline) => ("Offline", slint::Color::from_rgb_u8(0x6a, 0x6a, 0x6a)),
+        None => ("Unknown", slint::Color::from_rgb_u8(0x6a, 0x6a, 0x6a)),
+    };
+    win.set_uplink_label(slint::SharedString::from(label));
+    win.set_uplink_color(color);
+
+    let detail = match (uplink.state, uplink.portal_host.as_deref()) {
+        (Some(UplinkState::Portal), Some(host)) => host.to_string(),
+        (Some(UplinkState::Portal), None) => "sign-in required".into(),
+        (Some(UplinkState::Online), _) if uplink.bypass_active => "dns allowlist active".into(),
+        (Some(UplinkState::Online), _) => "internet reachable".into(),
+        (Some(UplinkState::Offline), _) => "no uplink".into(),
+        (None, _) => UNAVAILABLE.into(),
+    };
+    win.set_uplink_detail(slint::SharedString::from(detail));
+}
+
+fn publish_status(app: &App, win: &AppWindow) {
+    let eth = app.sys.ethernet().unwrap_or_default();
+    win.set_eth_mode(slint::SharedString::from(
+        eth.mode.map_or("", EthernetMode::as_str),
+    ));
+    let wan = match (eth.mode, eth.wan_up, eth.wan_address.as_deref()) {
+        (Some(EthernetMode::WiredWan), Some(true), Some(ip)) => format!("wan up  {ip}"),
+        (Some(EthernetMode::WiredWan), Some(true), None) => "wan up".into(),
+        (Some(EthernetMode::WiredWan), _, _) => "wan down".into(),
+        (Some(EthernetMode::DualLan), _, _) => "wifi uplink only".into(),
+        (None, _, _) => UNAVAILABLE.into(),
+    };
+    win.set_wan_label(slint::SharedString::from(wan));
+
+    let clients = app.sys.clients().ok().flatten().map_or_else(
+        || format!("clients: {UNAVAILABLE}"),
+        |n| format!("clients: {n}"),
+    );
+    win.set_clients_label(slint::SharedString::from(clients));
+}
+
+fn fmt_kb(used: Option<u64>, total: Option<u64>) -> String {
+    match (used, total) {
+        (Some(u), Some(t)) if t > 0 => {
+            format!("{} / {} MB", u / 1024, t / 1024)
+        }
+        _ => UNAVAILABLE.to_string(),
+    }
+}
+
+fn fmt_uptime(secs: Option<u64>) -> String {
+    let Some(s) = secs else {
+        return UNAVAILABLE.to_string();
+    };
+    let (d, h, m) = (s / 86_400, (s % 86_400) / 3600, (s % 3600) / 60);
+    if d > 0 {
+        format!("{d}d {h}h")
+    } else if h > 0 {
+        format!("{h}h {m}m")
+    } else {
+        format!("{m}m")
+    }
+}
+
+fn publish_clients(app: &App, win: &AppWindow) {
+    let rows: Vec<ClientRow> = app
+        .sys
+        .client_list()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| ClientRow {
+            name: c.name.into(),
+            ip: c.ip.into(),
+            mac: c.mac.into(),
+            wireless: c.wireless,
+        })
+        .collect();
+    win.set_client_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
+}
+
+fn publish_system(app: &App, win: &AppWindow) {
+    let info = app.sys.system_info().unwrap_or_default();
+    win.set_sys_load(slint::SharedString::from(
+        info.load1
+            .map_or_else(|| UNAVAILABLE.to_string(), |v| format!("{v:.2}")),
+    ));
+    win.set_sys_mem(slint::SharedString::from(fmt_kb(
+        info.mem_used_kb,
+        info.mem_total_kb,
+    )));
+    win.set_sys_flash(slint::SharedString::from(fmt_kb(
+        info.flash_used_kb,
+        info.flash_total_kb,
+    )));
+    win.set_sys_uptime(slint::SharedString::from(fmt_uptime(info.uptime_secs)));
+
+    let max = app.sys.max_backlight().unwrap_or(255).max(1);
+    let cur = app.sys.backlight().unwrap_or(max);
+    win.set_sys_brightness(slint::SharedString::from(format!(
+        "brightness {}%",
+        (cur.saturating_mul(100)) / max
+    )));
+    win.set_reboot_armed(matches!(
+        app.screen,
+        Screen::SystemInfo {
+            reboot_armed: true,
+            ..
+        }
+    ));
+}
+
 fn publish(app: &App, win: &AppWindow) {
     win.set_screen(screen_kind(&app.screen));
+
+    if matches!(app.screen, Screen::AdminMenu { .. } | Screen::Status { .. }) {
+        publish_uplink(app, win);
+    }
+    if matches!(app.screen, Screen::AdminMenu { .. } | Screen::Status { .. }) {
+        publish_status(app, win);
+    }
+    if matches!(app.screen, Screen::Clients { .. }) {
+        publish_clients(app, win);
+    }
+    if matches!(app.screen, Screen::SystemInfo { .. }) {
+        publish_system(app, win);
+    }
 
     if let Screen::PinEntry {
         user,
@@ -409,6 +605,28 @@ fn wire(app: &Rc<RefCell<App>>, win: &AppWindow) {
     }));
     win.on_open_wifi(handler!(|a, _w| {
         a.on_open_wifi();
+    }));
+    win.on_open_status(handler!(|a, _w| {
+        a.on_open_status();
+    }));
+    win.on_open_clients(handler!(|a, _w| {
+        a.on_open_clients();
+    }));
+    win.on_open_system(handler!(|a, _w| {
+        a.on_open_system();
+    }));
+
+    win.on_brightness_step(handler!((d: i32) |a, _w| {
+        a.on_brightness_step(d);
+    }));
+    win.on_do_reboot(handler!(|a, _w| {
+        a.on_reboot();
+    }));
+
+    win.on_set_eth_mode(handler!((m: slint::SharedString) |a, _w| {
+        if let Some(mode) = EthernetMode::parse(m.as_str()) {
+            a.on_set_ethernet_mode(mode);
+        }
     }));
 
     win.on_set_fan_mode(handler!((m: slint::SharedString) |a, _w| {

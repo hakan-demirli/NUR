@@ -24,6 +24,16 @@ pub(crate) enum Screen {
     Fan {
         user: User,
     },
+    Status {
+        user: User,
+    },
+    Clients {
+        user: User,
+    },
+    SystemInfo {
+        user: User,
+        reboot_armed: bool,
+    },
     Wifi {
         user: User,
         kind: WifiKind,

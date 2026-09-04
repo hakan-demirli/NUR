@@ -1,5 +1,7 @@
 import { Theme } from "theme.slint";
-import { BlankScreen, ScreensaverScreen, LockScreen, PinPadScreen, AdminMenuScreen, GuestMenuScreen, FanScreen, WifiScreen } from "screens.slint";
+import { BlankScreen, ScreensaverScreen, LockScreen, PinPadScreen, AdminMenuScreen, GuestMenuScreen, FanScreen, WifiScreen, StatusScreen, ClientsScreen, SystemScreen, ClientRow } from "screens.slint";
+
+export { ClientRow }
 
 export enum ScreenKind {
     blank,
@@ -11,6 +13,9 @@ export enum ScreenKind {
     fan,
     wifi_admin,
     wifi_guest,
+    status,
+    clients,
+    system,
 }
 
 export component AppWindow inherits Window {
@@ -49,6 +54,22 @@ export component AppWindow inherits Window {
     in property <string> clock_time;
     in property <string> clock_date;
 
+    in property <string> uplink_label;
+    in property <color>  uplink_color;
+    in property <string> uplink_detail;
+    in property <string> clients_label;
+    in property <string> eth_mode;
+    in property <string> wan_label;
+
+    in property <[ClientRow]> client_rows;
+
+    in property <string> sys_load;
+    in property <string> sys_mem;
+    in property <string> sys_flash;
+    in property <string> sys_uptime;
+    in property <string> sys_brightness;
+    in property <bool>   reboot_armed;
+
     callback wake();
     callback swipe_up();
     callback pick_user(string);
@@ -59,7 +80,13 @@ export component AppWindow inherits Window {
     callback nav_lock();
     callback open_fan();
     callback open_wifi();
+    callback open_status();
+    callback open_clients();
+    callback open_system();
     callback set_fan_mode(string);
+    callback set_eth_mode(string);
+    callback brightness_step(int);
+    callback do_reboot();
 
     callback any_touch();
 
@@ -90,9 +117,46 @@ export component AppWindow inherits Window {
     }
 
     if root.screen == ScreenKind.admin_menu: AdminMenuScreen {
-        open_fan  => { root.open_fan();  root.any_touch(); }
-        open_wifi => { root.open_wifi(); root.any_touch(); }
-        lock      => { root.nav_lock(); }
+        uplink_label: root.uplink_label;
+        uplink_color: root.uplink_color;
+        open_fan    => { root.open_fan();  root.any_touch(); }
+        open_wifi   => { root.open_wifi(); root.any_touch(); }
+        open_status => { root.open_status(); root.any_touch(); }
+        open_clients => { root.open_clients(); root.any_touch(); }
+        open_system  => { root.open_system(); root.any_touch(); }
+        clients_label: root.clients_label;
+        lock        => { root.nav_lock(); }
+    }
+
+    if root.screen == ScreenKind.clients: ClientsScreen {
+        rows: root.client_rows;
+        back() => { root.nav_back(); root.any_touch(); }
+        lock() => { root.nav_lock(); }
+    }
+
+    if root.screen == ScreenKind.system: SystemScreen {
+        load_label: root.sys_load;
+        mem_label: root.sys_mem;
+        flash_label: root.sys_flash;
+        uptime_label: root.sys_uptime;
+        brightness_label: root.sys_brightness;
+        reboot_armed: root.reboot_armed;
+        brightness_step(d) => { root.brightness_step(d); root.any_touch(); }
+        reboot()           => { root.do_reboot(); root.any_touch(); }
+        back()             => { root.nav_back(); root.any_touch(); }
+        lock()             => { root.nav_lock(); }
+    }
+
+    if root.screen == ScreenKind.status: StatusScreen {
+        uplink_label: root.uplink_label;
+        uplink_color: root.uplink_color;
+        detail_label: root.uplink_detail;
+        clients_label: root.clients_label;
+        eth_mode: root.eth_mode;
+        wan_label: root.wan_label;
+        set_eth_mode(m) => { root.set_eth_mode(m); root.any_touch(); }
+        back()          => { root.nav_back(); root.any_touch(); }
+        lock()          => { root.nav_lock(); }
     }
 
     if root.screen == ScreenKind.guest_menu: GuestMenuScreen {

@@ -50,6 +50,83 @@ pub(crate) struct FanStatus {
     pub rpm: Option<u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum UplinkState {
+    Online,
+    Portal,
+    Offline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum EthernetMode {
+    DualLan,
+    WiredWan,
+}
+
+impl EthernetMode {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::DualLan => "dual-lan",
+            Self::WiredWan => "wired-wan",
+        }
+    }
+
+    pub(crate) fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "dual-lan" => Self::DualLan,
+            "wired-wan" => Self::WiredWan,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct Uplink {
+    #[serde(default)]
+    pub state: Option<UplinkState>,
+    #[serde(default)]
+    pub portal_host: Option<String>,
+    #[serde(default)]
+    pub bypass_active: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct Ethernet {
+    #[serde(default)]
+    pub mode: Option<EthernetMode>,
+    #[serde(default)]
+    pub wan_up: Option<bool>,
+    #[serde(default)]
+    pub wan_address: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct Client {
+    pub name: String,
+    pub ip: String,
+    pub mac: String,
+    #[serde(default)]
+    pub wireless: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct SystemInfo {
+    #[serde(default)]
+    pub load1: Option<f32>,
+    #[serde(default)]
+    pub mem_used_kb: Option<u64>,
+    #[serde(default)]
+    pub mem_total_kb: Option<u64>,
+    #[serde(default)]
+    pub flash_used_kb: Option<u64>,
+    #[serde(default)]
+    pub flash_total_kb: Option<u64>,
+    #[serde(default)]
+    pub uptime_secs: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WifiInfo {
     pub ssid: String,
@@ -83,6 +160,15 @@ pub(crate) trait System: std::fmt::Debug {
     fn fan_status(&self) -> Result<FanStatus>;
     fn set_fan_mode(&self, mode: FanMode) -> Result<()>;
     fn wifi_info(&self, kind: WifiKind) -> Result<Option<WifiInfo>>;
+
+    fn uplink(&self) -> Result<Uplink>;
+    fn ethernet(&self) -> Result<Ethernet>;
+    fn set_ethernet_mode(&self, mode: EthernetMode) -> Result<()>;
+    fn clients(&self) -> Result<Option<u32>>;
+    fn client_list(&self) -> Result<Vec<Client>>;
+    fn system_info(&self) -> Result<SystemInfo>;
+    fn reboot(&self) -> Result<()>;
+    fn backlight(&self) -> Result<u32>;
 
     fn idle_seconds(&self) -> Option<u32> {
         None

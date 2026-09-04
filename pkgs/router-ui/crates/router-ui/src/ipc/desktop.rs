@@ -7,7 +7,10 @@ use log::info;
 use router_auth::{Argon2Hasher, User};
 use serde::{Deserialize, Serialize};
 
-use super::{AuthConfig, FanMode, FanStatus, System, Temps, WifiInfo, WifiKind};
+use super::{
+    AuthConfig, Client, Ethernet, EthernetMode, FanMode, FanStatus, System, SystemInfo, Temps,
+    Uplink, UplinkState, WifiInfo, WifiKind,
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Fixture {
@@ -18,6 +21,22 @@ struct Fixture {
     wifi_guest: Option<WifiInfo>,
     #[serde(default = "default_max_bl")]
     max_brightness: u32,
+    #[serde(default)]
+    uplink: Uplink,
+    #[serde(default)]
+    ethernet: Ethernet,
+    #[serde(default)]
+    clients: Option<u32>,
+    #[serde(default)]
+    client_list: Vec<Client>,
+    #[serde(default)]
+    system: SystemInfo,
+    #[serde(default = "default_backlight")]
+    backlight: u32,
+}
+
+const fn default_backlight() -> u32 {
+    3124
 }
 
 const fn default_max_bl() -> u32 {
@@ -55,6 +74,46 @@ impl DesktopSystem {
                 }),
                 wifi_guest: None,
                 max_brightness: default_max_bl(),
+                uplink: Uplink {
+                    state: Some(UplinkState::Portal),
+                    portal_host: Some("login.hotel.example.net".into()),
+                    bypass_active: true,
+                },
+                ethernet: Ethernet {
+                    mode: Some(EthernetMode::DualLan),
+                    wan_up: Some(false),
+                    wan_address: None,
+                },
+                clients: Some(3),
+                client_list: vec![
+                    Client {
+                        name: "laptop-0".into(),
+                        ip: "192.168.69.104".into(),
+                        mac: "2C:1B:3A:B9:3C:19".into(),
+                        wireless: true,
+                    },
+                    Client {
+                        name: "s01".into(),
+                        ip: "192.168.69.249".into(),
+                        mac: "38:05:25:36:05:BC".into(),
+                        wireless: false,
+                    },
+                    Client {
+                        name: "poco-x7-pro".into(),
+                        ip: "192.168.69.152".into(),
+                        mac: "9A:31:0C:44:7E:02".into(),
+                        wireless: true,
+                    },
+                ],
+                system: SystemInfo {
+                    load1: Some(0.14),
+                    mem_used_kb: Some(212_992),
+                    mem_total_kb: Some(1_012_736),
+                    flash_used_kb: Some(18_432),
+                    flash_total_kb: Some(102_400),
+                    uptime_secs: Some(86_432),
+                },
+                backlight: default_backlight(),
             }
         };
 
@@ -124,8 +183,55 @@ impl System for DesktopSystem {
         })
     }
 
+    fn uplink(&self) -> Result<Uplink> {
+        Ok(self.state.lock().unwrap().uplink.clone())
+    }
+
+    fn ethernet(&self) -> Result<Ethernet> {
+        Ok(self.state.lock().unwrap().ethernet.clone())
+    }
+
+    fn set_ethernet_mode(&self, mode: EthernetMode) -> Result<()> {
+        let mut s = self.state.lock().unwrap();
+        info!("desktop: set_ethernet_mode({})", mode.as_str());
+        s.ethernet.mode = Some(mode);
+        match mode {
+            EthernetMode::DualLan => {
+                s.ethernet.wan_up = Some(false);
+                s.ethernet.wan_address = None;
+            }
+            EthernetMode::WiredWan => {
+                s.ethernet.wan_up = Some(true);
+                s.ethernet.wan_address = Some("192.168.1.117".into());
+            }
+        }
+        Ok(())
+    }
+
+    fn clients(&self) -> Result<Option<u32>> {
+        Ok(self.state.lock().unwrap().clients)
+    }
+
+    fn client_list(&self) -> Result<Vec<Client>> {
+        Ok(self.state.lock().unwrap().client_list.clone())
+    }
+
+    fn system_info(&self) -> Result<SystemInfo> {
+        Ok(self.state.lock().unwrap().system.clone())
+    }
+
+    fn reboot(&self) -> Result<()> {
+        info!("desktop: reboot()");
+        Ok(())
+    }
+
+    fn backlight(&self) -> Result<u32> {
+        Ok(self.state.lock().unwrap().backlight)
+    }
+
     fn set_backlight(&self, brightness: u32) -> Result<()> {
         info!("desktop: set_backlight({brightness})");
+        self.state.lock().unwrap().backlight = brightness;
         Ok(())
     }
 

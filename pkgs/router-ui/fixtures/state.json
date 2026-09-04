@@ -17,5 +17,16 @@
     "password": "rolling-stones-pizza-42"
   },
   "wifi_guest": null,
-  "max_brightness": 3124
+  "max_brightness": 3124,
+  "uplink": {
+    "state": "portal",
+    "portal_host": "login.hotel.example.net",
+    "bypass_active": true
+  },
+  "ethernet": {
+    "mode": "dual-lan",
+    "wan_up": false,
+    "wan_address": null
+  },
+  "clients": 3
 }

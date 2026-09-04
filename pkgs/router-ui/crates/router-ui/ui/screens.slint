@@ -1,6 +1,13 @@
 import { Theme } from "theme.slint";
 import { Tile, TopBar, PinKey, PrimaryButton } from "widgets.slint";
 
+export struct ClientRow {
+    name: string,
+    ip: string,
+    mac: string,
+    wireless: bool,
+}
+
 export component BlankScreen inherits Rectangle {
     callback wake();
     background: #000;
@@ -166,8 +173,14 @@ export component PinPadScreen inherits Rectangle {
 }
 
 export component AdminMenuScreen inherits Rectangle {
+    in property <string> uplink_label;
+    in property <color> uplink_color;
+    in property <string> clients_label;
     callback open_fan();
     callback open_wifi();
+    callback open_status();
+    callback open_clients();
+    callback open_system();
     callback lock();
 
     background: Theme.bg;
@@ -179,6 +192,14 @@ export component AdminMenuScreen inherits Rectangle {
         TopBar { title: "Admin"; show_back: false; lock => { root.lock(); } }
 
         HorizontalLayout {
+            padding-left: Theme.pad_md;
+            padding-right: Theme.pad_md;
+            Tile { label: "Uplink"; sublabel: root.uplink_label;
+                   tile_color: root.uplink_color;
+                   clicked => { root.open_status(); } }
+        }
+
+        HorizontalLayout {
             spacing: Theme.pad_md;
             padding-left: Theme.pad_md;
             padding-right: Theme.pad_md;
@@ -187,6 +208,280 @@ export component AdminMenuScreen inherits Rectangle {
             Tile { label: "WiFi"; sublabel: "QR + key"; tile_color: Theme.surface;
                    clicked => { root.open_wifi(); } }
         }
+
+        HorizontalLayout {
+            spacing: Theme.pad_md;
+            padding-left: Theme.pad_md;
+            padding-right: Theme.pad_md;
+            Tile { label: "Clients"; sublabel: root.clients_label; tile_color: Theme.surface;
+                   clicked => { root.open_clients(); } }
+            Tile { label: "System"; sublabel: "info"; tile_color: Theme.surface;
+                   clicked => { root.open_system(); } }
+        }
+    }
+}
+
+export component ClientsScreen inherits Rectangle {
+    in property <[ClientRow]> rows;
+    callback back();
+    callback lock();
+
+    background: Theme.bg;
+
+    VerticalLayout {
+        padding: Theme.pad_sm;
+        spacing: Theme.pad_xs;
+
+        TopBar { title: "Clients"; back => { root.back(); } lock => { root.lock(); } }
+
+        if root.rows.length == 0: Text {
+            text: "no clients";
+            color: Theme.text_dim;
+            font-size: Theme.font_sm;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            vertical-stretch: 1;
+        }
+
+        if root.rows.length > 0: Flickable {
+            vertical-stretch: 1;
+            viewport-height: root.rows.length * 46px;
+
+            VerticalLayout {
+                spacing: 2px;
+                for row in root.rows: Rectangle {
+                    height: 44px;
+                    background: Theme.surface;
+                    border-radius: Theme.button_radius;
+
+                    HorizontalLayout {
+                        padding-left: Theme.pad_sm;
+                        padding-right: Theme.pad_sm;
+                        spacing: Theme.pad_xs;
+
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: row.name;
+                                color: Theme.text;
+                                font-size: Theme.font_sm;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: row.mac;
+                                color: Theme.text_dim;
+                                font-size: Theme.font_xs;
+                                overflow: elide;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: row.ip;
+                                color: Theme.text;
+                                font-size: Theme.font_xs;
+                                horizontal-alignment: right;
+                            }
+                            Text {
+                                text: row.wireless ? "wifi" : "wired";
+                                color: row.wireless ? Theme.accent_alt : Theme.text_dim;
+                                font-size: Theme.font_xs;
+                                horizontal-alignment: right;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component SystemScreen inherits Rectangle {
+    in property <string> load_label;
+    in property <string> mem_label;
+    in property <string> flash_label;
+    in property <string> uptime_label;
+    in property <string> brightness_label;
+    in property <bool> reboot_armed;
+
+    callback brightness_step(int);
+    callback reboot();
+    callback back();
+    callback lock();
+
+    background: Theme.bg;
+
+    VerticalLayout {
+        padding: Theme.pad_sm;
+        spacing: Theme.pad_xs;
+
+        TopBar { title: "System"; back => { root.back(); } lock => { root.lock(); } }
+
+        for entry in [
+            { k: "load", v: root.load_label },
+            { k: "memory", v: root.mem_label },
+            { k: "flash", v: root.flash_label },
+            { k: "uptime", v: root.uptime_label },
+        ]: Rectangle {
+            height: 28px;
+            background: Theme.surface;
+            border-radius: Theme.button_radius;
+            HorizontalLayout {
+                padding-left: Theme.pad_sm;
+                padding-right: Theme.pad_sm;
+                Text { text: entry.k; color: Theme.text_dim; font-size: Theme.font_xs;
+                       vertical-alignment: center; horizontal-stretch: 1; }
+                Text { text: entry.v; color: Theme.text; font-size: Theme.font_xs;
+                       vertical-alignment: center; }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: Theme.pad_sm;
+            Rectangle {
+                width: 44px;
+                height: 36px;
+                background: ta-dim.pressed ? Theme.surface_alt : Theme.surface;
+                border-radius: Theme.button_radius;
+                Text { text: "-"; color: Theme.text; font-size: Theme.font_md;
+                       horizontal-alignment: center; vertical-alignment: center; }
+                ta-dim := TouchArea {
+                    pointer-event(ev) => {
+                        if (ev.kind == PointerEventKind.up && ta-dim.has-hover) {
+                            root.brightness_step(-1);
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                background: Theme.surface;
+                border-radius: Theme.button_radius;
+                horizontal-stretch: 1;
+                Text { text: root.brightness_label; color: Theme.text;
+                       font-size: Theme.font_xs; horizontal-alignment: center;
+                       vertical-alignment: center; }
+            }
+            Rectangle {
+                width: 44px;
+                height: 36px;
+                background: ta-bright.pressed ? Theme.surface_alt : Theme.surface;
+                border-radius: Theme.button_radius;
+                Text { text: "+"; color: Theme.text; font-size: Theme.font_md;
+                       horizontal-alignment: center; vertical-alignment: center; }
+                ta-bright := TouchArea {
+                    pointer-event(ev) => {
+                        if (ev.kind == PointerEventKind.up && ta-bright.has-hover) {
+                            root.brightness_step(1);
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            height: Theme.touch_min;
+            background: root.reboot_armed ? Theme.err : Theme.surface;
+            border-radius: Theme.button_radius;
+            Text {
+                text: root.reboot_armed ? "tap again to reboot" : "Reboot";
+                color: Theme.text;
+                font-size: Theme.font_sm;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            ta-reboot := TouchArea {
+                pointer-event(ev) => {
+                    if (ev.kind == PointerEventKind.up && ta-reboot.has-hover) {
+                        root.reboot();
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component StatusScreen inherits Rectangle {
+    in property <string> uplink_label;
+    in property <color> uplink_color;
+    in property <string> detail_label;
+    in property <string> clients_label;
+    in property <string> eth_mode;
+    in property <string> wan_label;
+
+    callback set_eth_mode(string);
+    callback back();
+    callback lock();
+
+    background: Theme.bg;
+
+    VerticalLayout {
+        padding: Theme.pad_sm;
+        spacing: Theme.pad_sm;
+
+        TopBar { title: "Uplink"; back => { root.back(); } lock => { root.lock(); } }
+
+        Rectangle {
+            height: 62px;
+            background: root.uplink_color;
+            border-radius: Theme.tile_radius;
+            VerticalLayout {
+                padding: Theme.pad_xs;
+                Text { text: root.uplink_label; color: Theme.text;
+                       font-size: Theme.font_md; horizontal-alignment: center; }
+                Text { text: root.detail_label; color: Theme.text;
+                       font-size: Theme.font_xs; horizontal-alignment: center;
+                       wrap: word-wrap; }
+            }
+        }
+
+        Rectangle {
+            height: 26px;
+            background: Theme.surface;
+            border-radius: Theme.button_radius;
+            Text { text: root.clients_label; color: Theme.text_dim;
+                   font-size: Theme.font_xs; horizontal-alignment: center;
+                   vertical-alignment: center; }
+        }
+
+        Text { text: "Ethernet ports"; color: Theme.text_dim;
+               font-size: Theme.font_xs; horizontal-alignment: center; }
+
+        HorizontalLayout {
+            spacing: Theme.pad_sm;
+            Rectangle {
+                height: Theme.touch_min;
+                background: root.eth_mode == "dual-lan" ? Theme.accent : Theme.surface;
+                border-radius: Theme.button_radius;
+                Text { text: "2x LAN"; color: Theme.text; font-size: Theme.font_sm;
+                       horizontal-alignment: center; vertical-alignment: center; }
+                ta-dual := TouchArea {
+                    pointer-event(ev) => {
+                        if (ev.kind == PointerEventKind.up && ta-dual.has-hover) {
+                            root.set_eth_mode("dual-lan");
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                height: Theme.touch_min;
+                background: root.eth_mode == "wired-wan" ? Theme.accent : Theme.surface;
+                border-radius: Theme.button_radius;
+                Text { text: "WAN+LAN"; color: Theme.text; font-size: Theme.font_sm;
+                       horizontal-alignment: center; vertical-alignment: center; }
+                ta-wan := TouchArea {
+                    pointer-event(ev) => {
+                        if (ev.kind == PointerEventKind.up && ta-wan.has-hover) {
+                            root.set_eth_mode("wired-wan");
+                        }
+                    }
+                }
+            }
+        }
+
+        Text { text: root.wan_label; color: Theme.text_dim;
+               font-size: Theme.font_xs; horizontal-alignment: center; }
     }
 }
 
