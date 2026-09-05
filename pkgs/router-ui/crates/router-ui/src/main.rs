@@ -310,6 +310,10 @@ impl App {
     fn tick(&mut self) -> bool {
         let now = Instant::now();
 
+        if platform::take_touch_activity() {
+            self.idle.touch(now);
+        }
+
         if !matches!(self.screen, Screen::Blank | Screen::TouchTest) && self.idle.should_blank(now)
         {
             self.screen = Screen::Blank;

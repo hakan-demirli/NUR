@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 #[cfg(feature = "router")]
 pub(crate) mod router;
@@ -9,6 +9,7 @@ const TOUCH_TRANSFORM_COUNT: u8 = 4;
 const DEFAULT_TOUCH_TRANSFORM: u8 = 0;
 
 static TOUCH_TRANSFORM: AtomicU8 = AtomicU8::new(DEFAULT_TOUCH_TRANSFORM);
+static TOUCH_ACTIVITY: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TouchTransform {
@@ -75,6 +76,14 @@ pub(crate) fn advance_touch_transform() -> TouchTransform {
     let next = (current + 1) % TOUCH_TRANSFORM_COUNT;
     TOUCH_TRANSFORM.store(next, Ordering::Relaxed);
     TouchTransform::from_index(next)
+}
+
+pub(crate) fn record_touch_activity() {
+    TOUCH_ACTIVITY.store(true, Ordering::Relaxed);
+}
+
+pub(crate) fn take_touch_activity() -> bool {
+    TOUCH_ACTIVITY.swap(false, Ordering::Relaxed)
 }
 
 #[cfg(test)]
