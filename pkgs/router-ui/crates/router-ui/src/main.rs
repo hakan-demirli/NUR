@@ -55,7 +55,11 @@ impl App {
             sys,
             hasher: Argon2Hasher,
             auth: Authenticator::new(BackoffPolicy::default()),
-            screen: Screen::Lockscreen,
+            screen: if touch_test_enabled() {
+                Screen::TouchTest
+            } else {
+                Screen::Lockscreen
+            },
             idle: IdleTracker::new(idle_policy),
             last_clock_minute: String::new(),
         }
@@ -63,6 +67,22 @@ impl App {
 
     fn on_touch(&mut self) {
         self.idle.touch(Instant::now());
+    }
+
+    fn on_touch_test_corner(&self, corner: &str) {
+        info!("touch-test corner={corner}");
+    }
+
+    fn on_touch_test_result(&self, result: &str) {
+        if result == "try-something-else" {
+            let transform = platform::advance_touch_transform();
+            info!("touch-test result={result} next={}", transform.label());
+        } else {
+            info!(
+                "touch-test result={result} selected={}",
+                platform::touch_transform().label()
+            );
+        }
     }
 
     fn on_wake(&mut self) {
@@ -290,7 +310,8 @@ impl App {
     fn tick(&mut self) -> bool {
         let now = Instant::now();
 
-        if !matches!(self.screen, Screen::Blank) && self.idle.should_blank(now) {
+        if !matches!(self.screen, Screen::Blank | Screen::TouchTest) && self.idle.should_blank(now)
+        {
             self.screen = Screen::Blank;
             self.engage_blank();
             return true;
@@ -325,6 +346,10 @@ impl App {
 
 const UNAVAILABLE: &str = "-";
 
+const fn touch_test_enabled() -> bool {
+    cfg!(debug_assertions) || cfg!(feature = "touch-debug")
+}
+
 fn milli_c_text(milli_c: Option<i32>) -> slint::SharedString {
     milli_c.map_or_else(
         || slint::SharedString::from(UNAVAILABLE),
@@ -349,6 +374,7 @@ fn format_clock_now() -> (String, String) {
 
 const fn screen_kind(s: &Screen) -> ScreenKind {
     match s {
+        Screen::TouchTest => ScreenKind::TouchTest,
         Screen::Blank => ScreenKind::Blank,
         Screen::Screensaver => ScreenKind::Screensaver,
         Screen::Lockscreen => ScreenKind::Lockscreen,
@@ -486,6 +512,12 @@ fn publish_system(app: &App, win: &AppWindow) {
 fn publish(app: &App, win: &AppWindow) {
     win.set_screen(screen_kind(&app.screen));
 
+    if matches!(app.screen, Screen::TouchTest) {
+        win.set_touch_test_variant(slint::SharedString::from(
+            platform::touch_transform().label(),
+        ));
+    }
+
     if matches!(app.screen, Screen::AdminMenu { .. } | Screen::Status { .. }) {
         publish_uplink(app, win);
     }
@@ -570,6 +602,12 @@ fn wire(app: &Rc<RefCell<App>>, win: &AppWindow) {
 
     win.on_any_touch(handler!(|a, _w| {
         a.on_touch();
+    }));
+    win.on_touch_test_corner(handler!((corner: slint::SharedString) |a, _w| {
+        a.on_touch_test_corner(corner.as_str());
+    }));
+    win.on_touch_test_result(handler!((result: slint::SharedString) |a, _w| {
+        a.on_touch_test_result(result.as_str());
     }));
     win.on_wake(handler!(|a, _w| {
         a.on_wake();

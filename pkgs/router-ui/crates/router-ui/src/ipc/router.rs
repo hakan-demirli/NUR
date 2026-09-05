@@ -91,13 +91,27 @@ fn meminfo_kb(body: &str, key: &str) -> Option<u64> {
 }
 
 fn wireless_macs() -> Vec<String> {
-    let Ok(out) = Command::new("iwinfo").output() else {
+    let Ok(list) = Command::new("ubus").args(["list", "hostapd.*"]).output() else {
         return Vec::new();
     };
+
     let mut macs = Vec::new();
-    for line in String::from_utf8_lossy(&out.stdout).lines() {
-        if let Some(rest) = line.trim().strip_prefix("Station ") {
-            macs.push(rest.trim().to_ascii_uppercase());
+    for object in String::from_utf8_lossy(&list.stdout).lines() {
+        let object = object.trim();
+        if object.is_empty() {
+            continue;
+        }
+        let Ok(out) = Command::new("ubus")
+            .args(["call", object, "get_clients"])
+            .output()
+        else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
+            continue;
+        };
+        if let Some(clients) = value.get("clients").and_then(serde_json::Value::as_object) {
+            macs.extend(clients.keys().map(|m| m.to_ascii_uppercase()));
         }
     }
     macs

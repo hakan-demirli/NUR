@@ -6,6 +6,7 @@ use crate::ipc::WifiKind;
 
 #[derive(Debug, Clone)]
 pub(crate) enum Screen {
+    TouchTest,
     Blank,
     Screensaver,
     Lockscreen,

@@ -1,9 +1,10 @@
 import { Theme } from "theme.slint";
-import { BlankScreen, ScreensaverScreen, LockScreen, PinPadScreen, AdminMenuScreen, GuestMenuScreen, FanScreen, WifiScreen, StatusScreen, ClientsScreen, SystemScreen, ClientRow } from "screens.slint";
+import { BlankScreen, ScreensaverScreen, LockScreen, PinPadScreen, AdminMenuScreen, GuestMenuScreen, FanScreen, WifiScreen, StatusScreen, ClientsScreen, SystemScreen, TouchTestScreen, ClientRow } from "screens.slint";
 
 export { ClientRow }
 
 export enum ScreenKind {
+    touch_test,
     blank,
     screensaver,
     lockscreen,
@@ -21,12 +22,12 @@ export enum ScreenKind {
 export component AppWindow inherits Window {
     title: "router-ui";
 
-    preferred-width: 240px;
-    preferred-height: 320px;
-    min-width: 240px;
-    max-width: 240px;
-    min-height: 320px;
-    max-height: 320px;
+    preferred-width: 320px;
+    preferred-height: 240px;
+    min-width: 320px;
+    max-width: 320px;
+    min-height: 240px;
+    max-height: 240px;
     background: Theme.bg;
     no-frame: false;
 
@@ -69,6 +70,7 @@ export component AppWindow inherits Window {
     in property <string> sys_uptime;
     in property <string> sys_brightness;
     in property <bool>   reboot_armed;
+    in property <string> touch_test_variant;
 
     callback wake();
     callback swipe_up();
@@ -87,8 +89,16 @@ export component AppWindow inherits Window {
     callback set_eth_mode(string);
     callback brightness_step(int);
     callback do_reboot();
+    callback touch_test_corner(string);
+    callback touch_test_result(string);
 
     callback any_touch();
+
+    if root.screen == ScreenKind.touch_test: TouchTestScreen {
+        variant_label: root.touch_test_variant;
+        corner_tapped(corner) => { root.touch_test_corner(corner); root.any_touch(); }
+        result_chosen(result) => { root.touch_test_result(result); root.any_touch(); }
+    }
 
     if root.screen == ScreenKind.blank: BlankScreen {
         wake => { root.wake(); root.any_touch(); }

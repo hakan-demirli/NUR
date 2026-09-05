@@ -8,6 +8,213 @@ export struct ClientRow {
     wireless: bool,
 }
 
+component TouchTestCorner inherits Rectangle {
+    in property <string> label;
+    in property <bool> hit;
+    callback clicked();
+
+    width: 68px;
+    height: 68px;
+    background: root.hit ? Theme.ok : (ta.pressed ? Theme.accent_dim : Theme.surface);
+    border-width: 2px;
+    border-color: root.hit ? Theme.ok : Theme.text;
+    border-radius: Theme.button_radius;
+
+    VerticalLayout {
+        alignment: center;
+        Text {
+            text: root.label;
+            color: Theme.text;
+            font-size: Theme.font_lg;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.hit ? "hit" : "tap";
+            color: Theme.text;
+            font-size: Theme.font_xs;
+            horizontal-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        pointer-event(ev) => {
+            if (ev.kind == PointerEventKind.up && ta.has-hover) { root.clicked(); }
+        }
+    }
+}
+
+component TouchTestDecision inherits Rectangle {
+    in property <string> title;
+    in property <string> hint;
+    in property <color> button_color;
+    in property <bool> enabled: true;
+    in property <bool> confirmed;
+    callback clicked();
+
+    background: root.confirmed ? Theme.ok : (ta.pressed ? Theme.surface_alt : root.button_color);
+    border-width: 2px;
+    border-color: root.confirmed ? Theme.ok : Theme.text;
+    border-radius: Theme.tile_radius;
+    opacity: root.enabled ? 1 : 0.45;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: Theme.pad_xs;
+        Text {
+            text: root.title;
+            color: Theme.text;
+            font-size: Theme.font_md;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.hint;
+            color: Theme.text;
+            font-size: Theme.font_xs;
+            horizontal-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        pointer-event(ev) => {
+            if (ev.kind == PointerEventKind.up && ta.has-hover) { root.clicked(); }
+        }
+    }
+}
+
+export component TouchTestScreen inherits Rectangle {
+    in property <string> variant_label;
+    callback corner_tapped(string);
+    callback result_chosen(string);
+
+    property <bool> top_left_hit;
+    property <bool> top_right_hit;
+    property <bool> bottom_left_hit;
+    property <bool> bottom_right_hit;
+    property <int> good_taps;
+    property <int> retry_taps;
+    property <string> result;
+
+    background: Theme.bg;
+
+    top-left := TouchTestCorner {
+        x: 0;
+        y: 0;
+        label: "TL";
+        hit: root.top_left_hit;
+        clicked => {
+            root.top_left_hit = true;
+            root.good_taps = 0;
+            root.retry_taps = 0;
+            root.corner_tapped("top-left");
+        }
+    }
+
+    top-right := TouchTestCorner {
+        x: parent.width - self.width;
+        y: 0;
+        label: "TR";
+        hit: root.top_right_hit;
+        clicked => {
+            root.top_right_hit = true;
+            root.good_taps = 0;
+            root.retry_taps = 0;
+            root.corner_tapped("top-right");
+        }
+    }
+
+    bottom-left := TouchTestCorner {
+        x: 0;
+        y: parent.height - self.height;
+        label: "BL";
+        hit: root.bottom_left_hit;
+        clicked => {
+            root.bottom_left_hit = true;
+            root.good_taps = 0;
+            root.retry_taps = 0;
+            root.corner_tapped("bottom-left");
+        }
+    }
+
+    bottom-right := TouchTestCorner {
+        x: parent.width - self.width;
+        y: parent.height - self.height;
+        label: "BR";
+        hit: root.bottom_right_hit;
+        clicked => {
+            root.bottom_right_hit = true;
+            root.good_taps = 0;
+            root.retry_taps = 0;
+            root.corner_tapped("bottom-right");
+        }
+    }
+
+    looks-good := TouchTestDecision {
+        x: 76px;
+        y: 8px;
+        width: parent.width - 152px;
+        height: 104px;
+        title: root.result == "looks-good" ? "LOOKS GOOD" : "Looks good";
+        hint: root.result == "looks-good" ? "confirmed" :
+            root.good_taps == 0 ? "(click 3 times)" :
+            root.good_taps == 1 ? "(click 2 more times)" : "(click 1 more time)";
+        button_color: Theme.accent;
+        confirmed: root.result == "looks-good";
+        enabled: root.result == "";
+        clicked => {
+            root.retry_taps = 0;
+            if (root.good_taps == 2) {
+                root.good_taps = 3;
+                root.result = "looks-good";
+                root.result_chosen(root.result);
+            } else {
+                root.good_taps += 1;
+            }
+        }
+    }
+
+    try-again := TouchTestDecision {
+        x: 76px;
+        y: 128px;
+        width: parent.width - 152px;
+        height: 104px;
+        title: root.result == "try-something-else" ? "TRY SOMETHING ELSE" : "Try something else";
+        hint: root.result == "try-something-else" ? "confirmed" :
+            root.retry_taps == 0 ? "(click 3 times)" :
+            root.retry_taps == 1 ? "(click 2 more times)" : "(click 1 more time)";
+        button_color: Theme.err;
+        confirmed: root.result == "try-something-else";
+        enabled: root.result == "";
+        clicked => {
+            root.good_taps = 0;
+            if (root.retry_taps == 2) {
+                root.retry_taps = 0;
+                root.top_left_hit = false;
+                root.top_right_hit = false;
+                root.bottom_left_hit = false;
+                root.bottom_right_hit = false;
+                root.result_chosen("try-something-else");
+            } else {
+                root.retry_taps += 1;
+            }
+        }
+    }
+
+    Text {
+        x: 68px;
+        y: 113px;
+        width: parent.width - 136px;
+        height: 14px;
+        text: root.variant_label;
+        color: Theme.text_dim;
+        font-size: Theme.font_xs;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
 export component BlankScreen inherits Rectangle {
     callback wake();
     background: #000;

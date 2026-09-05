@@ -75,41 +75,61 @@ let
       platforms = pkgs.lib.platforms.linux;
     };
   };
+  buildRouter =
+    {
+      pname,
+      features,
+      passthru ? { },
+    }:
+    target.rustPlatform.buildRustPackage {
+      inherit pname passthru;
+      version = "0.1.0";
+
+      inherit src;
+      cargoLock.lockFile = ./Cargo.lock;
+
+      cargoBuildFlags = [
+        "-p"
+        "router-ui"
+        "--no-default-features"
+        "--features"
+        (pkgs.lib.concatStringsSep "," features)
+      ];
+
+      doCheck = false;
+
+      nativeBuildInputs = with pkgs; [
+        fontconfig
+        dejavu_fonts
+        pkg-config
+      ];
+
+      FONTCONFIG_FILE = fontsConf;
+
+      preBuild = ''
+        export LD_LIBRARY_PATH="${pkgs.fontconfig.lib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+      '';
+
+      meta = {
+        description = "Touchscreen UI for the GL-BE10000 LCD (cross-built aarch64-musl static)";
+        mainProgram = "router-ui";
+        platforms = pkgs.lib.platforms.linux;
+      };
+    };
+  touchDebug = buildRouter {
+    pname = "router-ui-touch-debug";
+    features = [
+      "router"
+      "touch-debug"
+    ];
+  };
 in
-target.rustPlatform.buildRustPackage {
+buildRouter {
   pname = "router-ui";
-  version = "0.1.0";
-
-  passthru = { inherit desktop; };
-
-  inherit src;
-  cargoLock.lockFile = ./Cargo.lock;
-
-  cargoBuildFlags = [
-    "-p"
-    "router-ui"
-    "--no-default-features"
-    "--features"
+  features = [
     "router"
   ];
-
-  doCheck = false;
-
-  nativeBuildInputs = with pkgs; [
-    fontconfig
-    dejavu_fonts
-    pkg-config
-  ];
-
-  FONTCONFIG_FILE = fontsConf;
-
-  preBuild = ''
-    export LD_LIBRARY_PATH="${pkgs.fontconfig.lib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-  '';
-
-  meta = {
-    description = "Touchscreen UI for the GL-BE10000 LCD (cross-built aarch64-musl static)";
-    mainProgram = "router-ui";
-    platforms = pkgs.lib.platforms.linux;
+  passthru = {
+    inherit desktop touchDebug;
   };
 }

@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Result};
 use framebuffer::Framebuffer;
 use log::{debug, error, info, warn};
-use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType, Rgb565Pixel};
+use slint::platform::software_renderer::{
+    MinimalSoftwareWindow, RenderingRotation, RepaintBufferType, Rgb565Pixel,
+};
 use slint::platform::{Platform, PointerEventButton, WindowAdapter, WindowEvent};
 use slint::{LogicalPosition, PhysicalSize, PlatformError};
 
@@ -74,6 +76,63 @@ enum TouchEvent {
     Up { x: f32, y: f32 },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TouchPhase {
+    Down,
+    Move,
+    Up,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RawTouchEvent {
+    phase: TouchPhase,
+    x: i32,
+    y: i32,
+}
+
+#[derive(Debug, Default)]
+struct TouchFrame {
+    x: i32,
+    y: i32,
+    pressed: bool,
+    pending_pressed: Option<bool>,
+    position_changed: bool,
+}
+
+impl TouchFrame {
+    fn set_x(&mut self, x: i32) {
+        self.x = x;
+        self.position_changed = true;
+    }
+
+    fn set_y(&mut self, y: i32) {
+        self.y = y;
+        self.position_changed = true;
+    }
+
+    fn set_pressed(&mut self, pressed: bool) {
+        self.pending_pressed = Some(pressed);
+    }
+
+    fn finish(&mut self) -> Option<RawTouchEvent> {
+        let next_pressed = self.pending_pressed.take().unwrap_or(self.pressed);
+        let phase = match (self.pressed, next_pressed, self.position_changed) {
+            (false, true, _) => Some(TouchPhase::Down),
+            (true, false, _) => Some(TouchPhase::Up),
+            (true, true, true) => Some(TouchPhase::Move),
+            _ => None,
+        };
+
+        self.pressed = next_pressed;
+        self.position_changed = false;
+        phase.map(|phase| RawTouchEvent {
+            phase,
+            x: self.x,
+            y: self.y,
+        })
+    }
+}
+
 #[derive(Debug, Default)]
 struct SavedState {
     backlight: Option<u32>,
@@ -87,9 +146,6 @@ pub(crate) struct FbdevPlatform {
     height: u32,
     start: Instant,
     rx: RefCell<Receiver<TouchEvent>>,
-    rotate_touch: bool,
-    raw_touch_w: u32,
-    raw_touch_h: u32,
     saved: RefCell<SavedState>,
 }
 
@@ -114,18 +170,18 @@ impl FbdevPlatform {
             fb.fix_screen_info.line_length
         );
 
-        let rotate_touch = width > height || fb.var_screen_info.rotate != 0;
-
         let (tx, rx) = mpsc::channel();
         let touch_path_owned = touch_path.to_string();
+        let logical_width = height;
+        let logical_height = width;
         thread::spawn(move || {
-            if let Err(e) = touch_loop(&touch_path_owned, &tx) {
+            if let Err(e) = touch_loop(&touch_path_owned, &tx, logical_width, logical_height) {
                 warn!("touch thread exited: {e:?}");
             }
         });
 
         let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
-        window.set_size(PhysicalSize::new(width, height));
+        window.set_size(PhysicalSize::new(height, width));
 
         Ok(Self {
             window,
@@ -134,9 +190,6 @@ impl FbdevPlatform {
             height,
             start: Instant::now(),
             rx: RefCell::new(rx),
-            rotate_touch,
-            raw_touch_w: 240,
-            raw_touch_h: 320,
             saved: RefCell::new(saved),
         })
     }
@@ -158,14 +211,10 @@ impl Platform for FbdevPlatform {
         let height = self.height as usize;
         let stride = self.fb.borrow().fix_screen_info.line_length as usize / 2;
         let needed = stride * height;
-
         let mut stats = FrameStats::default();
         let mut last_stats = Instant::now();
 
-        info!(
-            "event loop starting ({width}x{height} stride={stride} rot_touch={}, rendering in place)",
-            self.rotate_touch
-        );
+        info!("event loop starting (panel {width}x{height}, ui {height}x{width} rotated 90, stride={stride})");
 
         while !SHOULD_EXIT.load(Ordering::SeqCst) {
             self.drain_input();
@@ -186,6 +235,7 @@ impl Platform for FbdevPlatform {
                 }
                 let target = &mut pixels[..needed];
                 self.window.draw_if_needed(|renderer| {
+                    renderer.set_rendering_rotation(RenderingRotation::Rotate90);
                     let region = renderer.render(target, stride);
                     let size = region.bounding_box_size();
                     damaged_px = size.width.saturating_mul(size.height);
@@ -243,7 +293,7 @@ impl FbdevPlatform {
                 (x, y)
             }
         };
-        debug!("touch {ev:?} -> ({x}, {y})");
+        debug!("touch raw {ev:?} -> logical ({x}, {y})");
         let event = match ev {
             TouchEvent::Down { .. } => WindowEvent::PointerPressed {
                 position: LogicalPosition::new(x, y),
@@ -296,8 +346,13 @@ pub(crate) fn install_signal_handler() -> Result<()> {
     Ok(())
 }
 
-fn touch_loop(path: &str, tx: &mpsc::Sender<TouchEvent>) -> Result<()> {
-    use evdev::{AbsoluteAxisCode, Device, EventSummary, KeyCode};
+fn touch_loop(
+    path: &str,
+    tx: &mpsc::Sender<TouchEvent>,
+    logical_width: u32,
+    logical_height: u32,
+) -> Result<()> {
+    use evdev::{AbsoluteAxisCode, Device, EventSummary, KeyCode, SynchronizationCode};
 
     let mut dev = Device::open(path).map_err(|e| anyhow!("open {path}: {e}"))?;
     info!("touch: {} ({})", path, dev.name().unwrap_or("?"));
@@ -309,10 +364,7 @@ fn touch_loop(path: &str, tx: &mpsc::Sender<TouchEvent>) -> Result<()> {
     });
     info!("touch raw range: {raw_w}x{raw_h}");
 
-    let mut cx = 0i32;
-    let mut cy = 0i32;
-    let mut pressed = false;
-    let mut had_move = false;
+    let mut frame = TouchFrame::default();
 
     loop {
         let events = dev
@@ -320,30 +372,40 @@ fn touch_loop(path: &str, tx: &mpsc::Sender<TouchEvent>) -> Result<()> {
             .map_err(|e| anyhow!("fetch_events: {e}"))?;
         for ev in events {
             match ev.destructure() {
-                EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_X, v) => {
-                    cx = v;
-                    had_move = true;
+                EventSummary::AbsoluteAxis(
+                    _,
+                    AbsoluteAxisCode::ABS_X | AbsoluteAxisCode::ABS_MT_POSITION_X,
+                    value,
+                ) => {
+                    frame.set_x(value);
                 }
-                EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_Y, v) => {
-                    cy = v;
-                    had_move = true;
+                EventSummary::AbsoluteAxis(
+                    _,
+                    AbsoluteAxisCode::ABS_Y | AbsoluteAxisCode::ABS_MT_POSITION_Y,
+                    value,
+                ) => {
+                    frame.set_y(value);
                 }
-                EventSummary::Key(_, KeyCode::BTN_TOUCH, v) => {
-                    let now_pressed = v != 0;
-                    let (lx, ly) = translate(cx as u32, cy as u32, raw_w, raw_h);
-                    if now_pressed && !pressed {
-                        let _ = tx.send(TouchEvent::Down { x: lx, y: ly });
-                    } else if !now_pressed && pressed {
-                        let _ = tx.send(TouchEvent::Up { x: lx, y: ly });
+                EventSummary::Key(_, KeyCode::BTN_TOUCH, value) => {
+                    frame.set_pressed(value != 0);
+                }
+                EventSummary::Synchronization(_, SynchronizationCode::SYN_REPORT, _) => {
+                    if let Some(raw) = frame.finish() {
+                        let (x, y) = crate::platform::touch_transform().translate(
+                            raw.x.max(0) as u32,
+                            raw.y.max(0) as u32,
+                            raw_w,
+                            raw_h,
+                            logical_width,
+                            logical_height,
+                        );
+                        let event = match raw.phase {
+                            TouchPhase::Down => TouchEvent::Down { x, y },
+                            TouchPhase::Move => TouchEvent::Move { x, y },
+                            TouchPhase::Up => TouchEvent::Up { x, y },
+                        };
+                        let _ = tx.send(event);
                     }
-                    pressed = now_pressed;
-                }
-                EventSummary::Synchronization(_, _, _) => {
-                    if pressed && had_move {
-                        let (lx, ly) = translate(cx as u32, cy as u32, raw_w, raw_h);
-                        let _ = tx.send(TouchEvent::Move { x: lx, y: ly });
-                    }
-                    had_move = false;
                 }
                 _ => {}
             }
@@ -351,8 +413,47 @@ fn touch_loop(path: &str, tx: &mpsc::Sender<TouchEvent>) -> Result<()> {
     }
 }
 
-const fn translate(px: u32, py: u32, _raw_w: u32, _raw_h: u32) -> (f32, f32) {
-    (px as f32, py as f32)
+#[cfg(test)]
+mod tests {
+    use super::{RawTouchEvent, TouchFrame, TouchPhase};
+
+    #[test]
+    fn press_uses_coordinates_from_the_complete_input_frame() {
+        let mut frame = TouchFrame::default();
+        frame.set_x(10);
+        frame.set_y(20);
+        frame.set_pressed(true);
+        assert_eq!(
+            frame.finish(),
+            Some(RawTouchEvent {
+                phase: TouchPhase::Down,
+                x: 10,
+                y: 20,
+            })
+        );
+
+        frame.set_pressed(false);
+        assert_eq!(
+            frame.finish(),
+            Some(RawTouchEvent {
+                phase: TouchPhase::Up,
+                x: 10,
+                y: 20,
+            })
+        );
+
+        frame.set_pressed(true);
+        frame.set_x(180);
+        frame.set_y(250);
+        assert_eq!(
+            frame.finish(),
+            Some(RawTouchEvent {
+                phase: TouchPhase::Down,
+                x: 180,
+                y: 250,
+            })
+        );
+    }
 }
 
 fn read_int(path: &str) -> std::io::Result<i64> {

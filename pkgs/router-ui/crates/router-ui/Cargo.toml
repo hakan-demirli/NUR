@@ -17,6 +17,7 @@ path = "src/main.rs"
 [features]
 default = ["desktop"]
 desktop = ["slint/backend-winit", "slint/renderer-software"]
+touch-debug = []
 router = [
   "slint/renderer-software",
   "dep:framebuffer",
