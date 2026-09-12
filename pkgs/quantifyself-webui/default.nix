@@ -1,6 +1,7 @@
 { pkgs, ... }:
 pkgs.stdenv.mkDerivation {
-  name = "quantifyself";
+  pname = "quantifyself-webui";
+  version = "0.1.0";
 
   propagatedBuildInputs = [
     (pkgs.python3.withPackages (

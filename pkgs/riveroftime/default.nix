@@ -10,7 +10,7 @@ let
 
 in
 pkgs.stdenv.mkDerivation {
-  name = "riveroftime-checked";
+  inherit (realDerivation) pname version;
 
   dontUnpack = true;
   dontBuild = true;

@@ -18,7 +18,7 @@ let
   };
 
   htmlPreviewServerStdenv = pkgs.stdenv.mkDerivation {
-    name = "html-preview-server-script";
+    pname = "html-preview-server";
     version = "0.1.0";
 
     src = ./server;

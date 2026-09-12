@@ -1,12 +1,13 @@
 { pkgs, ... }:
 pkgs.stdenv.mkDerivation {
-  pname = "aw-manager";
+  pname = "clipboard-tts";
   version = "0.1.0";
 
   propagatedBuildInputs = [
+    pkgs.piper-tts
     (pkgs.python3.withPackages (
       pythonPackages: with pythonPackages; [
-        requests
+        pyclip
       ]
     ))
   ];
@@ -14,6 +15,8 @@ pkgs.stdenv.mkDerivation {
   dontUnpack = true;
 
   installPhase = ''
-    install -Dm755 ${./aw-manager.py} $out/bin/aw-manager;
+    install -Dm755 ${./clipboard-tts.py} $out/bin/clipboard-tts;
   '';
+
+  meta.broken = true;
 }

@@ -1,6 +1,7 @@
 { pkgs, ... }:
 pkgs.stdenv.mkDerivation {
-  name = "aw-watchers-mine";
+  pname = "aw-watcher";
+  version = "0.1.0";
 
   nativeBuildInputs = [ ];
 

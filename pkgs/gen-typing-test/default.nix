@@ -1,19 +1,24 @@
 { pkgs, ... }:
 pkgs.stdenv.mkDerivation {
-  pname = "aw-manager";
+  pname = "gen-typing-test";
   version = "0.1.0";
-
   propagatedBuildInputs = [
+    pkgs.awww
     (pkgs.python3.withPackages (
       pythonPackages: with pythonPackages; [
-        requests
+        #
       ]
     ))
   ];
-
   dontUnpack = true;
 
+  src = ./.;
+
   installPhase = ''
-    install -Dm755 ${./aw-manager.py} $out/bin/aw-manager;
+    mkdir -p $out/bin
+    cp -r $src/* $out/
+    rm $out/default.nix
+    ln -s $out/gen-typing-test.py $out/bin/gen-typing-test
+    chmod +x $out/bin/gen-typing-test
   '';
 }
