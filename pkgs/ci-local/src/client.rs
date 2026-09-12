@@ -1,6 +1,6 @@
 use crate::error::CiError;
 use crate::ipc::{Request, Response, RunState};
-use crate::types::{CommitSha, RepoName};
+use crate::types::{CommitPrefix, CommitSha, RepoName};
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -117,7 +117,7 @@ pub fn status_request(repo: Option<String>) -> Result<Request, CiError> {
 }
 
 pub fn cancel_request(sha_str: String, repo: Option<String>) -> Result<Request, CiError> {
-    let sha = CommitSha::try_from(sha_str).map_err(|e| CiError::Ipc {
+    let sha = CommitPrefix::try_from(sha_str).map_err(|e| CiError::Ipc {
         detail: e.to_string(),
     })?;
     let repo = repo

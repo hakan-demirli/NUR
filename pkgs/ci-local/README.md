@@ -72,7 +72,7 @@ Jobs and steps come from the repo's `.github/workflows/*.yml` files. Every `run:
 ```
 ci-local start
 ci-local status [--repo NAME]
-ci-local cancel <sha> [--repo NAME]
+ci-local cancel <sha-or-prefix> [--repo NAME]
 ci-local cancel-all
 ci-local retry --repo NAME <sha>
 ci-local shutdown

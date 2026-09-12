@@ -1,4 +1,4 @@
-use crate::types::{AttemptNumber, CommitSha, RepoName};
+use crate::types::{AttemptNumber, CommitPrefix, CommitSha, RepoName};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -7,7 +7,7 @@ pub enum Request {
         repo: Option<RepoName>,
     },
     Cancel {
-        sha: CommitSha,
+        sha: CommitPrefix,
         repo: Option<RepoName>,
     },
     CancelAll,
@@ -83,14 +83,14 @@ mod tests {
     #[test]
     fn request_cancel_roundtrip() {
         let req = Request::Cancel {
-            sha: sample_sha(),
+            sha: CommitPrefix::try_from("abcdef01".to_string()).unwrap(),
             repo: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         let back: Request = serde_json::from_str(&json).unwrap();
         match back {
             Request::Cancel { sha, repo } => {
-                assert_eq!(sha.as_str(), "a".repeat(40));
+                assert_eq!(sha.as_str(), "abcdef01");
                 assert!(repo.is_none());
             }
             other => panic!("unexpected: {other:?}"),

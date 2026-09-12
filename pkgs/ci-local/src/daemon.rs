@@ -4,7 +4,7 @@ use crate::ipc::{Request, Response, RunState, RunSummary};
 use crate::poller;
 use crate::runner::{self, JobResult, RunResult};
 use crate::summary;
-use crate::types::{AttemptNumber, CommitSha, RepoName};
+use crate::types::{AttemptNumber, CommitPrefix, CommitSha, RepoName};
 use crate::workflow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -833,14 +833,34 @@ async fn build_status_response(
 
 async fn cancel_run(
     state: &Arc<Mutex<DaemonState>>,
-    sha: &CommitSha,
+    prefix: &CommitPrefix,
     repo_filter: Option<&RepoName>,
 ) -> Response {
     let mut guard = state.lock().await;
+    let resolved_sha = match resolve_commit_prefix(
+        guard
+            .active
+            .values()
+            .filter(|run| repo_filter.is_none_or(|filter| run.repo_name == *filter))
+            .map(|run| run.sha.as_str()),
+        prefix,
+    ) {
+        PrefixResolution::NotFound => {
+            return Response::Error {
+                message: format!("no active run for {prefix}"),
+            };
+        }
+        PrefixResolution::Ambiguous => {
+            return Response::Error {
+                message: format!("commit prefix '{prefix}' is ambiguous; provide more characters"),
+            };
+        }
+        PrefixResolution::Unique(sha) => sha.to_string(),
+    };
     let mut count = 0;
     let mut affected_repos = Vec::new();
     for (key, run) in &guard.active {
-        if key.sha != sha.as_str() {
+        if key.sha != resolved_sha {
             continue;
         }
         if let Some(filter) = repo_filter {
@@ -854,22 +874,41 @@ async fn cancel_run(
     }
     for repo_name in &affected_repos {
         if let Some(repo_state) = guard.repos.get_mut(repo_name.as_str()) {
-            repo_state.cancelled_shas.insert(sha.as_str().to_string());
-            repo_state.completed_shas.remove(sha.as_str());
+            repo_state.cancelled_shas.insert(resolved_sha.clone());
+            repo_state.completed_shas.remove(resolved_sha.as_str());
         }
     }
-    if count > 0 {
-        Response::Ok {
-            message: format!(
-                "cancellation requested for {count} run(s) of {}",
-                sha.short()
-            ),
+    Response::Ok {
+        message: format!(
+            "cancellation requested for {count} run(s) of {}",
+            &resolved_sha[..8]
+        ),
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum PrefixResolution<'a> {
+    NotFound,
+    Unique(&'a str),
+    Ambiguous,
+}
+
+fn resolve_commit_prefix<'a>(
+    shas: impl IntoIterator<Item = &'a str>,
+    prefix: &CommitPrefix,
+) -> PrefixResolution<'a> {
+    let mut resolved = None;
+    for sha in shas {
+        if !sha.starts_with(prefix.as_str()) {
+            continue;
         }
-    } else {
-        Response::Error {
-            message: format!("no active run for {}", sha.short()),
+        match resolved {
+            None => resolved = Some(sha),
+            Some(current) if current == sha => {}
+            Some(_) => return PrefixResolution::Ambiguous,
         }
     }
+    resolved.map_or(PrefixResolution::NotFound, PrefixResolution::Unique)
 }
 
 async fn cancel_all_runs(state: &Arc<Mutex<DaemonState>>) -> Response {
@@ -937,5 +976,33 @@ async fn retry_run(
         Err(e) => Response::Error {
             message: format!("failed to launch retry: {e}"),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_commit_prefix, PrefixResolution};
+    use crate::types::CommitPrefix;
+
+    #[test]
+    fn commit_prefix_resolution_requires_one_distinct_active_sha() {
+        let prefix = CommitPrefix::try_from("2e2843ed".to_string()).unwrap();
+        let matching = "2e2843ed11111111111111111111111111111111";
+
+        assert_eq!(
+            resolve_commit_prefix([matching, matching], &prefix),
+            PrefixResolution::Unique(matching)
+        );
+        assert_eq!(
+            resolve_commit_prefix(
+                [matching, "2e2843ed22222222222222222222222222222222"],
+                &prefix
+            ),
+            PrefixResolution::Ambiguous
+        );
+        assert_eq!(
+            resolve_commit_prefix(["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"], &prefix),
+            PrefixResolution::NotFound
+        );
     }
 }

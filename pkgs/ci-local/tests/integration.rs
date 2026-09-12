@@ -448,7 +448,7 @@ fn cancel_specific_sha() {
 
     let resp = ipc_request(
         &socket,
-        &serde_json::json!({"type": "cancel", "sha": sha, "repo": null}),
+        &serde_json::json!({"type": "cancel", "sha": &sha[..8], "repo": null}),
     );
     assert!(
         resp["type"] == "ok" || resp["type"] == "error",

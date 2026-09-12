@@ -58,6 +58,57 @@ impl fmt::Display for CommitSha {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(try_from = "String")]
+pub struct CommitPrefix(String);
+
+#[derive(Debug)]
+pub struct InvalidCommitPrefix {
+    value: String,
+    reason: &'static str,
+}
+
+impl fmt::Display for InvalidCommitPrefix {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid commit prefix '{}': {}", self.value, self.reason)
+    }
+}
+
+impl std::error::Error for InvalidCommitPrefix {}
+
+impl TryFrom<String> for CommitPrefix {
+    type Error = InvalidCommitPrefix;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let trimmed = value.trim().to_lowercase();
+        if trimmed.is_empty() || trimmed.len() > 40 {
+            return Err(InvalidCommitPrefix {
+                value,
+                reason: "must contain between 1 and 40 characters",
+            });
+        }
+        if !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(InvalidCommitPrefix {
+                value,
+                reason: "must contain only hexadecimal characters",
+            });
+        }
+        Ok(Self(trimmed))
+    }
+}
+
+impl CommitPrefix {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for CommitPrefix {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "String")]
 pub struct BranchName(String);
 
 #[derive(Debug)]
@@ -485,6 +536,25 @@ mod tests {
         let hex = "1".repeat(40);
         let sha = CommitSha::try_from(hex.clone()).unwrap();
         assert_eq!(format!("{sha}"), hex);
+    }
+
+    #[test]
+    fn commit_prefix_accepts_abbreviated_sha() {
+        let prefix = CommitPrefix::try_from("2E2843ED".to_string()).unwrap();
+        assert_eq!(prefix.as_str(), "2e2843ed");
+    }
+
+    #[test]
+    fn commit_prefix_accepts_full_sha() {
+        let prefix = CommitPrefix::try_from("a".repeat(40)).unwrap();
+        assert_eq!(prefix.as_str(), "a".repeat(40));
+    }
+
+    #[test]
+    fn commit_prefix_rejects_empty_overlong_and_non_hex_values() {
+        assert!(CommitPrefix::try_from(String::new()).is_err());
+        assert!(CommitPrefix::try_from("a".repeat(41)).is_err());
+        assert!(CommitPrefix::try_from("not-a-sha".to_string()).is_err());
     }
 
     #[test]
