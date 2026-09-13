@@ -2,12 +2,18 @@ function loadData() {
   const saved = localStorage.getItem("homepageData");
   if (saved) {
     try {
-      return JSON.parse(saved);
+      const parsed = JSON.parse(saved);
+      return {
+        services: parsed.services || [],
+        addresses: parsed.addresses || [],
+        lan: parsed.lan || [...(window.DEFAULT_LAN || [])],
+      };
     } catch {}
   }
   return {
     services: [...(window.DEFAULT_SERVICES || [])],
     addresses: [...(window.DEFAULT_ADDRESSES || [])],
+    lan: [...(window.DEFAULT_LAN || [])],
   };
 }
 
@@ -175,12 +181,17 @@ function createShortcutEl(s, idx, type, clickable) {
 
 function render() {
   const servicesEl = document.getElementById("services");
+  const lanEl = document.getElementById("lan");
   const addressesEl = document.getElementById("addresses");
   servicesEl.innerHTML = "";
+  lanEl.innerHTML = "";
   addressesEl.innerHTML = "";
 
   document.getElementById("services-section").style.display = data.services
     .length
+    ? "block"
+    : "none";
+  document.getElementById("lan-section").style.display = data.lan.length
     ? "block"
     : "none";
   document.getElementById("addresses-section").style.display = data.addresses
@@ -190,6 +201,9 @@ function render() {
 
   data.services.forEach((s, i) =>
     servicesEl.appendChild(createShortcutEl(s, i, "services", true)),
+  );
+  data.lan.forEach((s, i) =>
+    lanEl.appendChild(createShortcutEl(s, i, "lan", true)),
   );
   data.addresses.forEach((s, i) =>
     addressesEl.appendChild(createShortcutEl(s, i, "addresses", false)),

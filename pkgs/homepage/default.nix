@@ -8,9 +8,10 @@ let
   defaultConfig = {
     services = [ ];
     addresses = [ ];
+    lan = [ ];
   };
 
-  config = if configFile != null then lib.importJSON configFile else defaultConfig;
+  config = defaultConfig // (if configFile != null then lib.importJSON configFile else { });
 
   mkShortcut = { name, url }: ''{ name: "${name}", url: "${url}" }'';
 
@@ -21,6 +22,9 @@ let
       ];
       window.DEFAULT_ADDRESSES = [
         ${lib.concatStringsSep ",\n      " (map mkShortcut config.addresses)}
+      ];
+      window.DEFAULT_LAN = [
+        ${lib.concatStringsSep ",\n      " (map mkShortcut config.lan)}
       ];
     </script>
   '';
