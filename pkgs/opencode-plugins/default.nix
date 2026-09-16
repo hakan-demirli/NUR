@@ -22,6 +22,7 @@ let
     patches = [
       ./plugins/claude-auth/patches/extra-homes.patch
       ./plugins/claude-auth/patches/auto-switch.patch
+      ./plugins/claude-auth/patches/model-config.patch
     ];
 
     nativeBuildInputs = [ esbuild ];
