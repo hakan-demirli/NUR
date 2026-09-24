@@ -1,22 +1,26 @@
-use crate::matcher::find_occurrences;
-use crate::types::{HunkLine, Patch, PatchOp};
+use crate::matcher::{find_occurrences, split_lines};
+use crate::operations::hunks::apply_hunks;
+use crate::types::{Patch, PatchOp};
 use anyhow::{anyhow, Result};
 use std::fs;
 
 pub fn apply_patch(patch: &Patch, dry_run: bool) -> Result<String> {
     let path = &patch.file_path;
-    println!("--- Applying patch to: {:?}", path);
+    println!("--- Applying patch to: {}", path.display());
 
     match &patch.op {
         PatchOp::Move(dest) => {
             if dry_run {
-                Ok(format!("    [DRY RUN] File would be moved to {:?}", dest))
+                Ok(format!(
+                    "    [DRY RUN] File would be moved to {}",
+                    dest.display()
+                ))
             } else {
                 if let Some(parent) = dest.parent() {
                     fs::create_dir_all(parent)?;
                 }
                 fs::rename(path, dest)?;
-                Ok(format!("    [SUCCESS] File moved to {:?}", dest))
+                Ok(format!("    [SUCCESS] File moved to {}", dest.display()))
             }
         }
         PatchOp::Delete => {
@@ -40,10 +44,7 @@ pub fn apply_patch(patch: &Patch, dry_run: bool) -> Result<String> {
                 }
             } else {
                 let content = fs::read_to_string(path)?;
-                let mut source_lines: Vec<String> = content
-                    .split_inclusive('\n')
-                    .map(|s| s.to_string())
-                    .collect();
+                let mut source_lines = split_lines(&content);
 
                 let (matches, match_len) = find_occurrences(&source_lines, search, None);
 
@@ -60,12 +61,7 @@ pub fn apply_patch(patch: &Patch, dry_run: bool) -> Result<String> {
                     let start_idx = matches[0];
                     let end_idx = start_idx + match_len;
 
-                    let replace_lines: Vec<String> = replace
-                        .split_inclusive('\n')
-                        .map(|s| s.to_string())
-                        .collect();
-
-                    source_lines.splice(start_idx..end_idx, replace_lines);
+                    source_lines.splice(start_idx..end_idx, split_lines(replace));
 
                     fs::write(path, source_lines.concat())?;
                     Ok("    [SUCCESS] Patch applied.".to_string())
@@ -73,94 +69,20 @@ pub fn apply_patch(patch: &Patch, dry_run: bool) -> Result<String> {
             }
         }
         PatchOp::Udiff(hunks) => {
-            let mut current_content = if path.exists() {
+            let current_content = if path.exists() {
                 fs::read_to_string(path)?
             } else {
                 String::new()
             };
 
-            let mut line_offset: isize = 0;
-
-            for (i, hunk) in hunks.iter().enumerate() {
-                let mut search_lines = Vec::new();
-                let mut replace_lines = Vec::new();
-
-                for line in &hunk.lines {
-                    match line {
-                        HunkLine::Context(s) => {
-                            let content = if s.len() > 1 {
-                                s[1..].to_string()
-                            } else {
-                                "\n".to_string()
-                            };
-                            search_lines.push(content.clone());
-                            replace_lines.push(content);
-                        }
-                        HunkLine::Remove(s) => {
-                            let content = if s.len() > 1 {
-                                s[1..].to_string()
-                            } else {
-                                "\n".to_string()
-                            };
-                            search_lines.push(content);
-                        }
-                        HunkLine::Add(s) => {
-                            let content = if s.len() > 1 {
-                                s[1..].to_string()
-                            } else {
-                                "\n".to_string()
-                            };
-                            replace_lines.push(content);
-                        }
-                    }
-                }
-
-                let search_block = search_lines.concat();
-                let replace_block = replace_lines.concat();
-
-                if search_block.is_empty() && current_content.is_empty() {
-                    current_content = replace_block;
-                    continue;
-                }
-
-                let source_lines: Vec<String> = current_content
-                    .split_inclusive('\n')
-                    .map(|s| s.to_string())
-                    .collect();
-
-                let hint = if hunk.old_start > 0 {
-                    Some((hunk.old_start as isize + line_offset).max(0) as usize)
-                } else {
-                    None
-                };
-
-                let (matches, match_len) = find_occurrences(&source_lines, &search_block, hint);
-
-                if matches.len() != 1 {
-                    return Err(anyhow!(
-                        "    [ERROR] Hunk #{} failed. Expected 1 match for block, found {}.\nSearch block:\n---\n{}---",
-                        i + 1,
-                        matches.len(),
-                        search_block
-                    ));
-                }
-
-                let start_idx = matches[0];
-                let end_idx = start_idx + match_len;
-
-                let mut new_lines = source_lines;
-                let replace_parts: Vec<String> = replace_block
-                    .split_inclusive('\n')
-                    .map(|s| s.to_string())
-                    .collect();
-
-                let added = replace_parts.len();
-                let removed = match_len;
-                line_offset += added as isize - removed as isize;
-
-                new_lines.splice(start_idx..end_idx, replace_parts);
-                current_content = new_lines.concat();
-            }
+            let patched_content = apply_hunks(&current_content, hunks).map_err(|failure| {
+                anyhow!(
+                    "    [ERROR] Hunk #{} failed. Expected 1 match for block, found {}.\nSearch block:\n---\n{}---",
+                    failure.index + 1,
+                    failure.matches,
+                    failure.search_block
+                )
+            })?;
 
             if dry_run {
                 Ok("    [DRY RUN] Udiff patch(es) would be applied.".to_string())
@@ -168,7 +90,7 @@ pub fn apply_patch(patch: &Patch, dry_run: bool) -> Result<String> {
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                fs::write(path, current_content)?;
+                fs::write(path, patched_content)?;
                 Ok("    [SUCCESS] Udiff patch(es) applied.".to_string())
             }
         }

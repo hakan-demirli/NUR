@@ -1,3 +1,4 @@
+pub mod hunks;
 pub mod patch_applicator;
 pub mod preflight_checks;
 

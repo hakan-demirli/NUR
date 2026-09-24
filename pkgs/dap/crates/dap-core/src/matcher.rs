@@ -1,3 +1,10 @@
+pub fn split_lines(content: &str) -> Vec<String> {
+    content
+        .split_inclusive('\n')
+        .map(|line| line.to_string())
+        .collect()
+}
+
 pub fn find_occurrences(
     source_lines: &[String],
     search_block_str: &str,
