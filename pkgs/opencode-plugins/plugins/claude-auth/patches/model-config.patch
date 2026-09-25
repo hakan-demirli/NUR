@@ -7,7 +7,7 @@ index 92e57be..51e97f5 100644
  
  export const config: ModelConfig = {
 -  ccVersion: "2.1.112",
-+  ccVersion: "2.1.257",
++  ccVersion: "__OPENCODE_CLAUDE_AUTH_CC_VERSION__",
    baseBetas: [
      "claude-code-20250219",
      "oauth-2025-04-20",

@@ -80,7 +80,9 @@ stdenvNoCC.mkDerivation {
       --replace-fail "__OPENCODE_CLAUDE_AUTH_CLAUDE__" \
       "${claude-code}/bin/claude" \
       --replace-fail "__OPENCODE_CLAUDE_AUTH_CLAUDE2__" \
-      "$out/bin/claude2"
+      "$out/bin/claude2" \
+      --replace-fail "__OPENCODE_CLAUDE_AUTH_CC_VERSION__" \
+      "${claude-code.version}"
 
     runHook postInstall
   '';
