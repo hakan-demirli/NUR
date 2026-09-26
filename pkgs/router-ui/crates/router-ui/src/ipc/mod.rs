@@ -82,6 +82,24 @@ impl EthernetMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum UplinkSource {
+    Ethernet,
+    Usb,
+    Wifi,
+}
+
+impl UplinkSource {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ethernet => "ethernet",
+            Self::Usb => "usb",
+            Self::Wifi => "wifi",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct Uplink {
     #[serde(default)]
@@ -162,6 +180,7 @@ pub(crate) trait System: std::fmt::Debug {
     fn wifi_info(&self, kind: WifiKind) -> Result<Option<WifiInfo>>;
 
     fn uplink(&self) -> Result<Uplink>;
+    fn active_uplink(&self) -> Result<Option<UplinkSource>>;
     fn ethernet(&self) -> Result<Ethernet>;
     fn set_ethernet_mode(&self, mode: EthernetMode) -> Result<()>;
     fn clients(&self) -> Result<Option<u32>>;

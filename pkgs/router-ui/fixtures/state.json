@@ -23,6 +23,7 @@
     "portal_host": "login.hotel.example.net",
     "bypass_active": true
   },
+  "active_uplink": "usb",
   "ethernet": {
     "mode": "dual-lan",
     "wan_up": false,

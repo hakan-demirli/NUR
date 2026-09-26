@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     AuthConfig, Client, Ethernet, EthernetMode, FanMode, FanStatus, System, SystemInfo, Temps,
-    Uplink, UplinkState, WifiInfo, WifiKind,
+    Uplink, UplinkSource, UplinkState, WifiInfo, WifiKind,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -23,6 +23,8 @@ struct Fixture {
     max_brightness: u32,
     #[serde(default)]
     uplink: Uplink,
+    #[serde(default)]
+    active_uplink: Option<UplinkSource>,
     #[serde(default)]
     ethernet: Ethernet,
     #[serde(default)]
@@ -79,6 +81,7 @@ impl DesktopSystem {
                     portal_host: Some("login.hotel.example.net".into()),
                     bypass_active: true,
                 },
+                active_uplink: Some(UplinkSource::Wifi),
                 ethernet: Ethernet {
                     mode: Some(EthernetMode::DualLan),
                     wan_up: Some(false),
@@ -185,6 +188,14 @@ impl System for DesktopSystem {
 
     fn uplink(&self) -> Result<Uplink> {
         Ok(self.state.lock().unwrap().uplink.clone())
+    }
+
+    fn active_uplink(&self) -> Result<Option<UplinkSource>> {
+        let s = self.state.lock().unwrap();
+        if s.ethernet.mode == Some(EthernetMode::WiredWan) && s.ethernet.wan_up == Some(true) {
+            return Ok(Some(UplinkSource::Ethernet));
+        }
+        Ok(s.active_uplink)
     }
 
     fn ethernet(&self) -> Result<Ethernet> {

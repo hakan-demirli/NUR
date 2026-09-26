@@ -4,10 +4,11 @@ use std::process::Command;
 
 use anyhow::{anyhow, Context, Result};
 use log::{info, warn};
+use serde::Deserialize;
 
 use super::{
     AuthConfig, Client, Ethernet, EthernetMode, FanMode, FanStatus, System, SystemInfo, Temps,
-    Uplink, WifiInfo, WifiKind,
+    Uplink, UplinkSource, WifiInfo, WifiKind,
 };
 
 const SYS_BL: &str = "/sys/class/backlight/backlight/brightness";
@@ -15,6 +16,7 @@ const SYS_BL_MAX: &str = "/sys/class/backlight/backlight/max_brightness";
 const SYS_FB_BLANK: &str = "/sys/class/graphics/fb0/blank";
 
 const CAPTIVE_STATUS: &str = "/usr/libexec/router-captive-status";
+const UPLINK_STATUS: &str = "/usr/libexec/router-uplink-status";
 const ETHERNET_STATUS: &str = "/usr/libexec/router-ethernet-status";
 const ETHERNET_APPLY: &str = "/usr/libexec/router-ethernet-apply";
 const DHCP_LEASES: &str = "/tmp/dhcp.leases";
@@ -267,6 +269,12 @@ impl System for RouterSystem {
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
         })
+    }
+
+    fn active_uplink(&self) -> Result<Option<UplinkSource>> {
+        let v = status_json(UPLINK_STATUS).ok_or_else(|| anyhow!("{UPLINK_STATUS} unavailable"))?;
+        Ok(v.get("source")
+            .and_then(|s| UplinkSource::deserialize(s).ok()))
     }
 
     fn ethernet(&self) -> Result<Ethernet> {

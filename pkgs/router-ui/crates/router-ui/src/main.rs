@@ -408,6 +408,14 @@ fn publish_uplink(app: &App, win: &AppWindow) {
         Some(UplinkState::Offline) => ("Offline", slint::Color::from_rgb_u8(0x6a, 0x6a, 0x6a)),
         None => ("Unknown", slint::Color::from_rgb_u8(0x6a, 0x6a, 0x6a)),
     };
+    let label = match app.sys.active_uplink() {
+        Ok(Some(source)) => format!("{label} via {}", source.as_str()),
+        Ok(None) => label.to_string(),
+        Err(e) => {
+            warn!("active_uplink: {e}");
+            label.to_string()
+        }
+    };
     win.set_uplink_label(slint::SharedString::from(label));
     win.set_uplink_color(color);
 
@@ -431,7 +439,7 @@ fn publish_status(app: &App, win: &AppWindow) {
         (Some(EthernetMode::WiredWan), Some(true), Some(ip)) => format!("wan up  {ip}"),
         (Some(EthernetMode::WiredWan), Some(true), None) => "wan up".into(),
         (Some(EthernetMode::WiredWan), _, _) => "wan down".into(),
-        (Some(EthernetMode::DualLan), _, _) => "wifi uplink only".into(),
+        (Some(EthernetMode::DualLan), _, _) => "no wired uplink".into(),
         (None, _, _) => UNAVAILABLE.into(),
     };
     win.set_wan_label(slint::SharedString::from(wan));
