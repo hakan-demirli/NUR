@@ -6,6 +6,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -205,7 +206,7 @@ def fetch_video(task: VideoTask) -> SyncResult:
         log_msg("INFO", f"START download to {temp_dir}")
 
         safe_title = sanitize_filename(task.title or "Unknown")
-        filename_tmpl = f"{task.index:02d}_{safe_title}.%(ext)s"
+        filename_tmpl = f"{task.index:05d}_{safe_title}.%(ext)s"
 
         ydl_opts = {
             "outtmpl": str(temp_dir / filename_tmpl),
@@ -305,6 +306,33 @@ def discover_playlists(
                 orchestrator_logger.warning(f"No metadata.json in {rel_path}")
 
     return playlists
+
+
+def normalize_music_filenames(directory: str, logger: logging.Logger) -> None:
+    p = Path(directory)
+    if not p.is_dir():
+        return
+
+    for src in sorted(p.iterdir()):
+        if not (src.is_file() or src.is_symlink()):
+            continue
+        match = re.fullmatch(r"([0-9]+)_(.+\.opus(?:\.part[a-z]+)?)", src.name)
+        if not match:
+            continue
+
+        dst = src.with_name(f"{int(match.group(1)):05d}_{match.group(2)}")
+        if src == dst:
+            continue
+        if dst.exists() or dst.is_symlink():
+            logger.warning("SKIP rename: %s -> %s (destination exists)", src, dst)
+            continue
+
+        try:
+            src.rename(dst)
+        except OSError as exc:
+            logger.error("Failed to rename %s -> %s: %s", src, dst, exc)
+        else:
+            logger.info("RENAMED: %s -> %s", src.name, dst.name)
 
 
 def create_m3u8(directory: str):
@@ -417,8 +445,9 @@ def main():
         print("")
         log.info(f"Sync Complete. Success: {success_count}, Failures: {fail_count}")
 
-    log.info("[Phase 3] Regenerating M3U8 Playlists...")
+    log.info("[Phase 3] Normalizing filenames and regenerating M3U8 Playlists...")
     for _, path, _ in playlists:
+        normalize_music_filenames(path, log)
         create_m3u8(path)
 
     log.info("All operations completed.")
