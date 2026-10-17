@@ -42,7 +42,7 @@ new file mode 100644
 diff --git a/src/cli/serve/serve.cpp b/src/cli/serve/serve.cpp
 --- a/src/cli/serve/serve.cpp
 +++ b/src/cli/serve/serve.cpp
-@@ -28,6 +28,7 @@
+@@ -29,6 +29,7 @@
  #include "src/cli/arg_parser.hpp"
  #include "src/cli/sampling_options.hpp"
  #include "src/cli/serve/asr_service.hpp"
@@ -50,20 +50,22 @@ diff --git a/src/cli/serve/serve.cpp b/src/cli/serve/serve.cpp
  #include "src/cli/serve/http_server.hpp"
  #include "src/cli/serve/image_api.hpp"
  #include "src/cli/serve/inference_backend.hpp"
-@@ -641,3 +642,4 @@
+@@ -718,4 +719,5 @@
      parser.AddOption("", "--cache-disk", "DIR",
--                     "Opt-in restart-safe continuation cache directory",
+-                     "Opt-in restart-safe continuation cache directory "
 +                     "Restart-safe continuation cache directory "
-+                     "(default: XDG cache/gufo/server-PORT; empty disables)",
++                     "(default: XDG cache/gufo/server-PORT; empty disables) "
+                      "(Flash-Next: owned by one process)",
                       "Cache", &cache_disk_directory);
-@@ -1132,3 +1134,4 @@
+@@ -1261,4 +1263,5 @@
      llm_parser.AddOption("", "--cache-disk", "DIR",
--                         "Opt-in restart-safe continuation cache directory",
+-                         "Opt-in restart-safe continuation cache directory "
 +                         "Restart-safe continuation cache directory "
-+                         "(default: XDG cache/gufo/server-PORT; empty disables)",
++                         "(default: XDG cache/gufo/server-PORT; empty disables) "
+                          "(Flash-Next: owned by one process)",
                           "Cache", &cache_disk_directory);
-@@ -1158,6 +1161,11 @@
-     if (!valid_server_options()) {
+@@ -1296,6 +1299,11 @@
+     if (!prepare_server_options()) {
        return 2;
      }
 +    cache_disk_directory = ResolveDiskCacheDirectory(
@@ -71,6 +73,6 @@ diff --git a/src/cli/serve/serve.cpp b/src/cli/serve/serve.cpp
 +            ? std::optional<std::filesystem::path>(cache_disk_directory)
 +            : std::nullopt,
 +        static_cast<std::uint16_t>(port));
-     bool sampling_valid = true;
-     try {
-       sampling_config.Validate();
+     // Progress lines are INFO-tier. Under a quieter threshold `--log-progress`
+     // would be accepted and then silently discarded, so reject the combination
+     // instead of ignoring an option the caller asked for.

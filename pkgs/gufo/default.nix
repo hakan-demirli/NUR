@@ -9,13 +9,14 @@
   curl,
   libpng,
   libjpeg,
+  libwebp,
   openssl,
   ffmpeg-headless,
   rocmPackages,
 }:
 
 let
-  revision = "fd1710b5fd090880722e0681a868df2006595c73";
+  revision = "78248de23cc279b1a5d4443cef816a6059bde189";
   shortRevision = builtins.substring 0 7 revision;
   gpuPackages = rocmPackages.gfx1151.overrideScope (
     final: prev: {
@@ -54,13 +55,13 @@ let
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "gufo";
-  version = "0.3.0";
+  version = "0.16.0-unstable-2026-10-16";
 
   src = fetchFromGitHub {
     owner = "gufo-org";
     repo = "gufo";
     rev = revision;
-    hash = "sha256-nqbCT/pgsOJD/AmmgE2o+CpEriosf2chRUFTfermvtE=";
+    hash = "sha256-nijYj1fDSMMSyloOuTX2aRDbp/Gkzj26X5/EKXQy6X0=";
   };
 
   patches = [ ./default-cache.patch ];
@@ -81,6 +82,7 @@ stdenv.mkDerivation (finalAttrs: {
     curl
     libpng
     libjpeg
+    libwebp
     openssl
     gpuPackages.clr
     gpuPackages.hipblas
@@ -134,7 +136,7 @@ stdenv.mkDerivation (finalAttrs: {
   meta = {
     description = "Local inference engine for AMD Strix Halo (gfx1151 GPU)";
     homepage = "https://github.com/gufo-org/gufo";
-    changelog = "https://github.com/gufo-org/gufo/releases/tag/v${finalAttrs.version}";
+    changelog = "https://github.com/gufo-org/gufo/blob/${revision}/CHANGELOG.md";
     license = lib.licenses.mit;
     platforms = [ "x86_64-linux" ];
     mainProgram = "gufo";
