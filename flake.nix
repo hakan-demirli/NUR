@@ -49,7 +49,15 @@
               formatter = import ./nix/formatters.nix { inherit pkgs; };
             }
             // lib.optionalAttrs (system == "x86_64-linux") {
-              checks = import ./nix/checks.nix { inherit pkgs; };
+              checks =
+                let
+                  packageChecks =
+                    name:
+                    lib.mapAttrs' (check: lib.nameValuePair "${name}-${check}") (
+                      import (./pkgs + "/${name}/nix/checks.nix") { inherit pkgs; }
+                    );
+                in
+                import ./nix/checks.nix { inherit pkgs; } // packageChecks "dap" // packageChecks "riveroftime";
             }
           );
 
