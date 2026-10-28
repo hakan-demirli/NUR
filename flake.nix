@@ -50,14 +50,15 @@
             }
             // lib.optionalAttrs (system == "x86_64-linux") {
               checks =
-                let
-                  packageChecks =
-                    name:
+                import ./nix/checks.nix { inherit pkgs; }
+                // lib.concatMapAttrs (
+                  name: _:
+                  lib.optionalAttrs (builtins.pathExists (./pkgs + "/${name}/nix/checks.nix")) (
                     lib.mapAttrs' (check: lib.nameValuePair "${name}-${check}") (
                       import (./pkgs + "/${name}/nix/checks.nix") { inherit pkgs; }
-                    );
-                in
-                import ./nix/checks.nix { inherit pkgs; } // packageChecks "dap" // packageChecks "riveroftime";
+                    )
+                  )
+                ) (findPackageDirs ./pkgs);
             }
           );
 
