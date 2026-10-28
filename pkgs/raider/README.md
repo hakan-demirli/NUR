@@ -1,1 +1,0 @@
-# OpenCode TUI Alternative
