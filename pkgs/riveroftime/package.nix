@@ -17,4 +17,10 @@ pkgs.rustPlatform.buildRustPackage {
     pkgs.libxkbcommon
     pkgs.fontconfig
   ];
+
+  meta = {
+    description = "Wayland layer countdown timer";
+    license = pkgs.lib.licenses.mit;
+    mainProgram = "riveroftime";
+  };
 }
