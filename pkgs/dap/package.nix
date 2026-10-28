@@ -18,4 +18,11 @@ pkgs.rustPlatform.buildRustPackage {
     "-p"
     "dap-cli"
   ];
+
+  meta = {
+    description = "Diff-fenced style diff apply tool.";
+    license = pkgs.lib.licenses.mit;
+    maintainers = [ pkgs.lib.maintainers.hakan-demirli ];
+    mainProgram = "dap";
+  };
 }
