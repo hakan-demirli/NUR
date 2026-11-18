@@ -4,8 +4,10 @@
   fetchurl,
   git,
   nix-update-script,
+  pkg-config,
   rustPlatform,
   versionCheckHook,
+  zstd,
 }:
 
 let
@@ -49,6 +51,10 @@ rustPlatform.buildRustPackage (finalAttrs: {
   '';
 
   cargoHash = "sha256-nkwMWctuJ4NItPGmyAIKUAFcMIBSkEOoLoHCEZjIAX0=";
+
+  nativeBuildInputs = [ pkg-config ];
+
+  buildInputs = [ zstd ];
 
   nativeCheckInputs = [ git ];
 
